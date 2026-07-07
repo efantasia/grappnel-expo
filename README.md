@@ -1,56 +1,82 @@
-# Welcome to your Expo app 👋
+# Grappnel
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Grappnel turns students' course materials — textbooks, lecture notes, slides —
+into study guides. Upload sources, organize them into folders, and generate
+topic-focused guides built only from your own materials via RAG.
 
-## Get started
+**Stack:** Expo (iOS / Android / web) · Supabase (auth, Postgres, Storage,
+edge functions) · Google Cloud (GCS, Vertex AI Search, Gemini).
 
-1. Install dependencies
+## How it works
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+upload (app) ─→ Supabase Storage (materials/<user_id>/…)
+                     │  sync-material edge function
+                     ▼
+               GCS bucket  content/<user_id>/<material_id>.<ext>
+                           metadata/<user_id>/<material_id>.jsonl
+                     │  documents:import (INCREMENTAL)
+                     ▼
+               Vertex AI Search datastore
+                 structData: { user_id, folder_id, material_id, title }
+                     │  search filter: user_id: ANY("<uid>") [AND folder_id…]
+                     ▼
+               generate-guide edge function ─→ Gemini ─→ study_guides row
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Every layer is scoped by user id: Postgres RLS (`auth.uid() = user_id`),
+Storage policies (per-user folders), GCS object prefixes, and a mandatory
+`user_id` filter on every Vertex AI Search query.
 
-### Other setup steps
+## Setup
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+### 1. Supabase
 
-## Learn more
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase db push                 # applies supabase/migrations
+npx supabase functions deploy        # deploys all four edge functions
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Copy `.env.example` to `.env` and fill in `EXPO_PUBLIC_SUPABASE_URL` and
+`EXPO_PUBLIC_SUPABASE_ANON_KEY` from the project's API settings.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 2. Google Cloud
 
-## Join the community
+To switch gcloud to this project's configuration:
 
-Join our community of developers creating universal apps.
+```bash
+gcloud config configurations activate grappnel
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+./scripts/setup-gcp.sh <gcp-project-id>
+```
+
+This creates the GCS bucket, the Vertex AI Search datastore (layout parser +
+chunking, explicit filterable schema), a search engine, and a
+`grappnel-functions` service account with a key in `secrets/` (gitignored).
+It prints the exact `npx supabase secrets set …` command to run afterwards.
+
+### 3. Run
+
+```bash
+npm run dev        # Expo dev server (press w for web, i for iOS, a for Android)
+npm run typecheck
+npm run build:web  # static web export in dist/
+```
+
+## Edge functions
+
+| Function | Purpose |
+| --- | --- |
+| `sync-material` | Copy upload from Supabase Storage → GCS, write JSONL manifest, trigger incremental Vertex import. `metadata_only: true` re-syncs title/folder without re-copying. |
+| `check-material` | Poll the import operation; settles status to `indexed` / `error`. |
+| `delete-material` | Remove the search document, GCS objects, Storage file, and DB row. |
+| `generate-guide` | Retrieve chunks (user-scoped, optional folder/material filter), generate a Markdown study guide with Gemini in the background, update the `study_guides` row. |
+
+## Supported file types
+
+PDF, TXT, MD, HTML, DOCX, PPTX, XLSX — up to 100 MB per file (the set Vertex
+AI Search indexes directly).

@@ -41,3 +41,15 @@ example
 # generated native folders
 /ios
 /android
+
+# env files (only .env.example is committed)
+.env
+.env.*
+!.env.example
+supabase/functions/.env
+
+# service account keys
+secrets/
+
+# supabase local state
+supabase/.temp/
