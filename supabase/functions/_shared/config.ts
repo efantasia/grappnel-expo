@@ -32,6 +32,13 @@ export const gcpConfig = {
   get geminiLocation() {
     return Deno.env.get('GEMINI_LOCATION') ?? 'global';
   },
+  // Cloud Run job that extracts audio and transcribes it (audio/video materials)
+  get transcribeJob() {
+    return Deno.env.get('GCP_TRANSCRIBE_JOB') ?? 'grappnel-transcribe';
+  },
+  get transcribeRegion() {
+    return Deno.env.get('GCP_TRANSCRIBE_REGION') ?? 'us-central1';
+  },
 };
 
 // Discovery Engine REST base URL is location-aware.

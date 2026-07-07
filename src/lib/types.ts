@@ -16,6 +16,7 @@ export interface Folder {
 export type MaterialStatus =
   | 'uploaded'
   | 'syncing'
+  | 'transcribing'
   | 'indexing'
   | 'indexed'
   | 'error';
@@ -30,6 +31,7 @@ export interface Material {
   file_size: number | null;
   storage_path: string;
   gcs_object: string | null;
+  transcript_object: string | null;
   status: MaterialStatus;
   error_message: string | null;
   index_operation: string | null;

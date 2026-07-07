@@ -27,6 +27,35 @@ export async function uploadObject(
   }
 }
 
+export async function objectExists(objectName: string): Promise<boolean> {
+  const token = await getGoogleAccessToken();
+  const url = `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o/${encodeURIComponent(objectName)}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 404) {
+    await response.body?.cancel();
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(`GCS stat failed for ${objectName} (${response.status}): ${await response.text()}`);
+  }
+  await response.body?.cancel();
+  return true;
+}
+
+export async function readObjectText(objectName: string): Promise<string> {
+  const token = await getGoogleAccessToken();
+  const url = `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o/${encodeURIComponent(objectName)}?alt=media`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error(`GCS read failed for ${objectName} (${response.status}): ${await response.text()}`);
+  }
+  return response.text();
+}
+
 export async function deleteObject(objectName: string): Promise<void> {
   const token = await getGoogleAccessToken();
   const url = `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o/${encodeURIComponent(objectName)}`;

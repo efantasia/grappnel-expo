@@ -1,0 +1,9 @@
+{
+  "name": "grappnel-transcribe-job",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run job: extract audio from a GCS media object with ffmpeg, transcribe it with Modulate Velma, write the transcript back to GCS.",
+  "dependencies": {
+    "undici": "^7.3.0"
+  }
+}

@@ -8,8 +8,10 @@ import { syncMaterial } from '@/lib/services/materials';
 import { supabase } from '@/lib/supabase';
 import { Material } from '@/lib/types';
 
-// Formats Vertex AI Search can index directly (same set the honeylove KB
-// uses). Everything else is rejected at pick time.
+// Documents are formats Vertex AI Search can index directly (same set the
+// honeylove KB uses); audio/video is transcribed first (Cloud Run job +
+// Velma) and the transcript is indexed. Everything else is rejected at
+// pick time.
 export const SUPPORTED_MIME_TYPES = [
   'application/pdf',
   'text/plain',
@@ -18,6 +20,16 @@ export const SUPPORTED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/x-m4a',
+  'audio/wav',
+  'audio/aac',
+  'audio/flac',
+  'audio/ogg',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
 ];
 
 const EXTENSION_MIME_TYPES: Record<string, string> = {
@@ -28,6 +40,15 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
 };
 
 export const MAX_FILE_BYTES = 100 * 1024 * 1024; // matches the bucket limit
@@ -88,7 +109,8 @@ async function uploadOne(
     return {
       fileName: asset.name,
       material: null,
-      error: 'Unsupported file type. Use PDF, TXT, MD, HTML, DOCX, PPTX, or XLSX.',
+      error:
+        'Unsupported file type. Use PDF, TXT, MD, HTML, DOCX, PPTX, XLSX, or an audio/video file (MP3, M4A, WAV, MP4, MOV, …).',
     };
   }
   if (asset.size && asset.size > MAX_FILE_BYTES) {

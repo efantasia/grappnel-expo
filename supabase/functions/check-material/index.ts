@@ -1,10 +1,19 @@
-// Polls the Vertex AI Search import operation for a material and settles its
-// status (indexing -> indexed | error). Called by the client while any
-// material is in the 'indexing' state.
+// Settles in-flight material statuses; called by the client while any
+// material is 'transcribing' or 'indexing'.
+//   transcribing: watches GCS for the transcription job's transcript (then
+//                 imports it into the search index) or error marker.
+//   indexing:     polls the Vertex AI Search import operation
+//                 (indexing -> indexed | error).
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
-import { getImportOperation } from '../_shared/discovery.ts';
+import { getImportOperation, importMaterialDocument } from '../_shared/discovery.ts';
+import { objectExists, readObjectText } from '../_shared/gcs.ts';
+import { transcriptObjectName, transcriptErrorObjectName } from '../_shared/transcribe.ts';
+
+// A transcription run that has produced neither a transcript nor an error
+// marker after this long is presumed dead (job crash without cleanup).
+const TRANSCRIBE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 Deno.serve(async (req) => {
   const options = handleOptions(req);
@@ -30,11 +39,68 @@ Deno.serve(async (req) => {
     .single();
   if (fetchError || !material) return errorResponse('Material not found', 404);
 
-  if (material.status !== 'indexing' || !material.index_operation) {
-    return jsonResponse({ material });
-  }
-
   try {
+    if (material.status === 'transcribing') {
+      const transcriptObject = transcriptObjectName(user.id, material.id);
+      if (await objectExists(transcriptObject)) {
+        const operationName = await importMaterialDocument({
+          materialId: material.id,
+          userId: user.id,
+          folderId: material.folder_id,
+          title: material.title,
+          fileName: material.file_name,
+          mimeType: 'text/plain',
+          gcsObject: transcriptObject,
+        });
+        const { data: updated } = await admin
+          .from('materials')
+          .update({
+            transcript_object: transcriptObject,
+            index_operation: operationName,
+            status: 'indexing',
+          })
+          .eq('id', material.id)
+          .select()
+          .single();
+        return jsonResponse({ material: updated });
+      }
+
+      const errorObject = transcriptErrorObjectName(user.id, material.id);
+      if (await objectExists(errorObject)) {
+        const message = (await readObjectText(errorObject)).trim().slice(0, 500);
+        const { data: updated } = await admin
+          .from('materials')
+          .update({
+            status: 'error',
+            error_message: message || 'Transcription failed.',
+          })
+          .eq('id', material.id)
+          .select()
+          .single();
+        return jsonResponse({ material: updated });
+      }
+
+      const startedAt = new Date(material.updated_at as string).getTime();
+      if (Date.now() - startedAt > TRANSCRIBE_TIMEOUT_MS) {
+        const { data: updated } = await admin
+          .from('materials')
+          .update({
+            status: 'error',
+            error_message: 'Transcription timed out. Try syncing the material again.',
+          })
+          .eq('id', material.id)
+          .select()
+          .single();
+        return jsonResponse({ material: updated });
+      }
+
+      return jsonResponse({ material });
+    }
+
+    if (material.status !== 'indexing' || !material.index_operation) {
+      return jsonResponse({ material });
+    }
+
     const status = await getImportOperation(material.index_operation);
     if (!status.done) return jsonResponse({ material });
 

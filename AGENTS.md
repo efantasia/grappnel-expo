@@ -13,6 +13,8 @@ before writing Expo-API code.
 - `npm run lint` — `expo lint`
 - `npm run build:web` — web export to `dist/`
 - `npx supabase db push` / `npx supabase functions deploy` — deploy backend
+- `gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job
+  --region us-central1` — deploy the transcription job
 
 ## Architecture rules
 
@@ -23,10 +25,17 @@ before writing Expo-API code.
   filter expressions injection-safe).
 - Edge functions use the service role (RLS bypassed) and therefore must
   always add `.eq('user_id', user.id)` to queries.
-- Material lifecycle: `uploaded → syncing → indexing → indexed | error`
-  (statuses set by `sync-material` / `check-material`). Vertex imports are
-  **INCREMENTAL** with one JSONL manifest per material — never use FULL
-  reconciliation, it would purge other users' documents.
+- Material lifecycle: `uploaded → syncing → [transcribing →] indexing →
+  indexed | error` (statuses set by `sync-material` / `check-material`).
+  Vertex imports are **INCREMENTAL** with one JSONL manifest per material —
+  never use FULL reconciliation, it would purge other users' documents.
+- Audio/video materials are transcribed before indexing: `sync-material`
+  starts the `grappnel-transcribe` Cloud Run job (`gcp/transcribe-job/`:
+  ffmpeg → Modulate Velma STT), which writes
+  `transcripts/<user_id>/<material_id>.txt` (or `….error.txt`) to GCS;
+  `check-material` watches for those objects and imports the transcript
+  (`transcript_object` on the row) as `text/plain`. Re-deploy the job after
+  changing it — `npx supabase functions deploy` does NOT cover it.
 - Renaming/moving a material must re-sync the search index metadata
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row

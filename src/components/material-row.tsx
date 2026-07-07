@@ -3,8 +3,10 @@ import {
   Globe,
   LucideIcon,
   MoreVertical,
+  Music,
   Presentation,
   Table2,
+  Video,
 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -27,6 +29,8 @@ function MaterialIcon({
   if (mimeType.includes('presentation')) Icon = Presentation;
   else if (mimeType.includes('spreadsheet')) Icon = Table2;
   else if (mimeType === 'text/html') Icon = Globe;
+  else if (mimeType.startsWith('audio/')) Icon = Music;
+  else if (mimeType.startsWith('video/')) Icon = Video;
   return <Icon size={size} color={color} />;
 }
 

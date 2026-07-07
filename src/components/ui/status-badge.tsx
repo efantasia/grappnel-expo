@@ -8,6 +8,7 @@ import { GuideStatus, MaterialStatus } from '@/lib/types';
 const LABELS: Record<MaterialStatus | GuideStatus, string> = {
   uploaded: 'Queued',
   syncing: 'Syncing…',
+  transcribing: 'Transcribing…',
   indexing: 'Indexing…',
   indexed: 'Ready',
   generating: 'Generating…',

@@ -6,6 +6,11 @@ import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
 import { deleteObject } from '../_shared/gcs.ts';
 import { deleteDocument, metadataObjectName } from '../_shared/discovery.ts';
+import {
+  isMediaMimeType,
+  transcriptObjectName,
+  transcriptErrorObjectName,
+} from '../_shared/transcribe.ts';
 
 Deno.serve(async (req) => {
   const options = handleOptions(req);
@@ -36,6 +41,10 @@ Deno.serve(async (req) => {
     await deleteObject(metadataObjectName(user.id, material.id));
     if (material.gcs_object) {
       await deleteObject(material.gcs_object);
+    }
+    if (isMediaMimeType(material.mime_type)) {
+      await deleteObject(transcriptObjectName(user.id, material.id));
+      await deleteObject(transcriptErrorObjectName(user.id, material.id));
     }
     await admin.storage.from('materials').remove([material.storage_path]);
     const { error: deleteError } = await admin
