@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Linking } from 'react-native';
 
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { OptionsModal } from '@/components/ui/options-modal';
@@ -90,6 +91,17 @@ export function MaterialActions({
         title={material.title}
         onClose={close}
         options={[
+          ...(material.source_url
+            ? [
+                {
+                  label: 'Open video',
+                  onPress: () => {
+                    Linking.openURL(material.source_url!);
+                    close();
+                  },
+                },
+              ]
+            : []),
           { label: 'Rename', onPress: () => setMode('rename') },
           { label: 'Move to folder…', onPress: () => setMode('move') },
           ...(canRetry

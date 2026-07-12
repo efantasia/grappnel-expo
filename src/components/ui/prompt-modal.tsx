@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, TextInputProps, View } from 'react-native';
 
 import { AppModal } from '@/components/ui/app-modal';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ interface PromptModalProps {
   confirmTitle?: string;
   loading?: boolean;
   error?: string | null;
+  // Extra TextInput props, e.g. keyboardType="url" for link entry.
+  inputProps?: TextInputProps;
   onConfirm: (value: string) => void;
   onClose: () => void;
 }
@@ -26,6 +28,7 @@ export function PromptModal({
   confirmTitle = 'Save',
   loading = false,
   error,
+  inputProps,
   onConfirm,
   onClose,
 }: PromptModalProps) {
@@ -48,6 +51,7 @@ export function PromptModal({
         autoFocus
         error={error}
         onSubmitEditing={() => onConfirm(value)}
+        {...inputProps}
       />
       <View style={styles.actions}>
         <Button title="Cancel" variant="secondary" onPress={onClose} style={styles.action} />

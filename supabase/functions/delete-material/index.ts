@@ -42,11 +42,14 @@ Deno.serve(async (req) => {
     if (material.gcs_object) {
       await deleteObject(material.gcs_object);
     }
-    if (isMediaMimeType(material.mime_type)) {
+    if (material.source_type === 'youtube' || isMediaMimeType(material.mime_type)) {
       await deleteObject(transcriptObjectName(user.id, material.id));
       await deleteObject(transcriptErrorObjectName(user.id, material.id));
     }
-    await admin.storage.from('materials').remove([material.storage_path]);
+    // YouTube materials have no Storage upload.
+    if (material.storage_path) {
+      await admin.storage.from('materials').remove([material.storage_path]);
+    }
     const { error: deleteError } = await admin
       .from('materials')
       .delete()

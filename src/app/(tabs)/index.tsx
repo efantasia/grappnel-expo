@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { FolderPlus, Inbox, Upload } from 'lucide-react-native';
+import { CirclePlay, FolderPlus, Inbox, Upload } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
   FlatList,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { AddYouTubeModal } from '@/components/add-youtube-modal';
 import { FolderRow } from '@/components/folder-row';
 import { MaterialActions } from '@/components/material-actions';
 import { MaterialRow } from '@/components/material-row';
@@ -47,6 +48,7 @@ export default function LibraryScreen() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
+  const [addingVideo, setAddingVideo] = useState(false);
   const [folderMode, setFolderMode] = useState<FolderMode>(null);
   const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
@@ -198,6 +200,9 @@ export default function LibraryScreen() {
             <Pressable onPress={() => setFolderMode('create')} hitSlop={8}>
               <FolderPlus size={24} color={colors.primary} />
             </Pressable>
+            <Pressable onPress={() => setAddingVideo(true)} hitSlop={8}>
+              <CirclePlay size={24} color={colors.primary} />
+            </Pressable>
             <Pressable onPress={handleUpload} hitSlop={8} disabled={uploading}>
               <Upload size={24} color={uploading ? colors.textTertiary : colors.primary} />
             </Pressable>
@@ -217,7 +222,7 @@ export default function LibraryScreen() {
             <EmptyState
               icon={Inbox}
               title="Your library is empty"
-              message="Upload textbooks, lecture notes, or slides (PDF, DOCX, PPTX, and more) to start building study guides."
+              message="Upload textbooks, lecture notes, or slides (PDF, DOCX, PPTX, and more) — or add a YouTube lecture — to start building study guides."
             />
           ) : null
         }
@@ -232,6 +237,16 @@ export default function LibraryScreen() {
         folders={folders}
         onDismiss={() => setSelectedMaterial(null)}
         onChanged={load}
+      />
+
+      <AddYouTubeModal
+        visible={addingVideo}
+        folderId={null}
+        onClose={() => setAddingVideo(false)}
+        onAdded={async () => {
+          setAddingVideo(false);
+          await load();
+        }}
       />
 
       <PromptModal

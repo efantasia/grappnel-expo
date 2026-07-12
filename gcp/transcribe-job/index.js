@@ -1,11 +1,15 @@
-// Cloud Run job for Grappnel media materials. One execution per material:
+// Cloud Run job for Grappnel media materials (uploads only — YouTube
+// materials use the video's own captions, fetched by the edge functions).
+// One execution per material:
 //
 //   1. download INPUT_OBJECT (audio or video) from the GCS bucket
 //   2. ffmpeg -> mono 16 kHz MP3 (strips video; shrinks an hour of anything
 //      to ~15 MB, comfortably under Velma's 100 MB request cap)
 //   3. POST to Modulate's Velma batch STT API (synchronous — the transcript
 //      comes back in the response)
-//   4. write the transcript text to TRANSCRIPT_OBJECT
+//   4. write the transcript to TRANSCRIPT_OBJECT as timestamped paragraphs
+//      ("[12:04] Speaker 1: …") built from Velma's utterances, so search
+//      chunks — and ultimately study-guide citations — carry timestamps
 //
 // On any failure the error message is written to ERROR_OBJECT instead and
 // the process exits 0 — check-material reads the marker; a non-zero exit is
@@ -71,25 +75,28 @@ async function uploadObjectText(bucket, objectName, text, contentType) {
   }
 }
 
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (data) => {
+      stderr = (stderr + data.toString()).slice(-2000);
+    });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve(stderr);
+      else reject(new Error(`${command} exited with ${code}: ${stderr.slice(-500)}`));
+    });
+  });
+}
+
 async function extractAudio(inputPath, outputPath) {
-  const args = [
+  await run('ffmpeg', [
     '-hide_banner', '-nostdin', '-y',
     '-i', inputPath,
     '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k',
     outputPath,
-  ];
-  await new Promise((resolve, reject) => {
-    const ffmpeg = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    ffmpeg.stderr.on('data', (data) => {
-      stderr = (stderr + data.toString()).slice(-2000);
-    });
-    ffmpeg.on('error', reject);
-    ffmpeg.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited with ${code}: ${stderr.slice(-500)}`));
-    });
-  });
+  ]);
 }
 
 async function transcribe(audioPath, apiKey) {
@@ -112,7 +119,52 @@ async function transcribe(audioPath, apiKey) {
   if (typeof result.text !== 'string' || result.text.trim() === '') {
     throw new Error('Velma returned an empty transcript — the file may contain no speech.');
   }
-  return result.text;
+  return result;
+}
+
+function formatTimestamp(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+// A new paragraph starts on speaker change or after this much audio, so every
+// search chunk downstream contains several timestamp markers.
+const PARAGRAPH_MAX_MS = 60_000;
+
+// Renders Velma's utterances as timestamped paragraphs:
+//   [12:04] Speaker 1: We can now define the derivative as …
+// Falls back to the flat text if the response carries no usable utterances.
+function formatTranscript(result) {
+  const utterances = (Array.isArray(result.utterances) ? result.utterances : [])
+    .filter((u) => typeof u.text === 'string' && u.text.trim() !== '' && typeof u.start_ms === 'number')
+    .sort((a, b) => a.start_ms - b.start_ms);
+  if (utterances.length === 0) return result.text;
+
+  const multiSpeaker = new Set(utterances.map((u) => u.speaker).filter((s) => s != null)).size > 1;
+
+  const paragraphs = [];
+  let current = null;
+  for (const u of utterances) {
+    if (
+      !current ||
+      (multiSpeaker && u.speaker !== current.speaker) ||
+      u.start_ms - current.startMs >= PARAGRAPH_MAX_MS
+    ) {
+      current = { startMs: u.start_ms, speaker: u.speaker, texts: [] };
+      paragraphs.push(current);
+    }
+    current.texts.push(u.text.trim());
+  }
+
+  return paragraphs
+    .map((p) => {
+      const speaker = multiSpeaker && p.speaker != null ? ` Speaker ${p.speaker}:` : '';
+      return `[${formatTimestamp(p.startMs)}]${speaker} ${p.texts.join(' ')}`;
+    })
+    .join('\n\n');
 }
 
 async function main() {
@@ -136,7 +188,8 @@ async function main() {
   }
 
   console.log(`Transcribing ${Math.round(size / 1024)} KB of audio`);
-  const transcript = await transcribe(audioPath, apiKey);
+  const result = await transcribe(audioPath, apiKey);
+  const transcript = formatTranscript(result);
 
   console.log(`Writing transcript to gs://${bucket}/${transcriptObject}`);
   await uploadObjectText(bucket, transcriptObject, transcript, 'text/plain; charset=utf-8');

@@ -424,3 +424,6 @@ verify_jwt = true
 
 [functions.generate-guide]
 verify_jwt = true
+
+[functions.add-youtube-material]
+verify_jwt = true

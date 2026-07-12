@@ -1,4 +1,5 @@
 import {
+  CirclePlay,
   FileText,
   Globe,
   LucideIcon,
@@ -26,7 +27,8 @@ function MaterialIcon({
   color: string;
 }) {
   let Icon: LucideIcon = FileText;
-  if (mimeType.includes('presentation')) Icon = Presentation;
+  if (mimeType === 'video/youtube') Icon = CirclePlay;
+  else if (mimeType.includes('presentation')) Icon = Presentation;
   else if (mimeType.includes('spreadsheet')) Icon = Table2;
   else if (mimeType === 'text/html') Icon = Globe;
   else if (mimeType.startsWith('audio/')) Icon = Music;
@@ -60,7 +62,7 @@ export function MaterialRow({
           {material.title}
         </Text>
         <Text style={[styles.meta, { color: colors.textTertiary }]} numberOfLines={1}>
-          {material.file_name}
+          {material.source_type === 'youtube' ? 'YouTube video' : material.file_name}
           {size ? ` · ${size}` : ''}
         </Text>
         {material.status === 'error' && material.error_message ? (

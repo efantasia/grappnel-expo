@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { FileUp } from 'lucide-react-native';
+import { CirclePlay, FileUp } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
   FlatList,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { AddYouTubeModal } from '@/components/add-youtube-modal';
 import { MaterialActions } from '@/components/material-actions';
 import { MaterialRow } from '@/components/material-row';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,7 @@ export default function FolderScreen() {
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
+  const [addingVideo, setAddingVideo] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -89,9 +91,14 @@ export default function FolderScreen() {
         title={folder?.name ?? 'Folder'}
         showBack
         right={
-          <Pressable onPress={handleUpload} hitSlop={8} disabled={uploading}>
-            <FileUp size={24} color={uploading ? colors.textTertiary : colors.primary} />
-          </Pressable>
+          <>
+            <Pressable onPress={() => setAddingVideo(true)} hitSlop={8}>
+              <CirclePlay size={24} color={colors.primary} />
+            </Pressable>
+            <Pressable onPress={handleUpload} hitSlop={8} disabled={uploading}>
+              <FileUp size={24} color={uploading ? colors.textTertiary : colors.primary} />
+            </Pressable>
+          </>
         }
       />
       <FlatList
@@ -139,7 +146,7 @@ export default function FolderScreen() {
           <EmptyState
             icon={FileUp}
             title="No sources yet"
-            message="Upload this course's textbook chapters, lecture notes, or slides to this folder."
+            message="Upload this course's textbook chapters, lecture notes, or slides — or add a YouTube lecture — to this folder."
           />
         }
         contentContainerStyle={styles.listContent}
@@ -153,6 +160,16 @@ export default function FolderScreen() {
         folders={folders}
         onDismiss={() => setSelectedMaterial(null)}
         onChanged={load}
+      />
+
+      <AddYouTubeModal
+        visible={addingVideo}
+        folderId={id ?? null}
+        onClose={() => setAddingVideo(false)}
+        onAdded={async () => {
+          setAddingVideo(false);
+          await load();
+        }}
       />
     </Screen>
   );

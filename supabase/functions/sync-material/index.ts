@@ -2,19 +2,21 @@
 // bucket, then triggers indexing: documents go straight to an incremental
 // Vertex AI Search import; audio/video first runs the transcription job
 // (ffmpeg + Velma) and check-material imports the transcript when it lands.
+// YouTube materials skip both the copy and the job — their timestamped
+// transcript is re-fetched from the video's captions and imported directly.
 // Also used to re-sync metadata (title/folder changes) without re-copying
 // the file by passing metadata_only: true.
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
-import { uploadObject, deleteObject } from '../_shared/gcs.ts';
+import { uploadObject } from '../_shared/gcs.ts';
 import { importMaterialDocument, contentObjectName } from '../_shared/discovery.ts';
 import {
   isMediaMimeType,
-  runTranscribeJob,
+  startTranscription,
   transcriptObjectName,
-  transcriptErrorObjectName,
 } from '../_shared/transcribe.ts';
+import { fetchYouTubeTranscript, parseYouTubeVideoId } from '../_shared/youtube.ts';
 
 Deno.serve(async (req) => {
   const options = handleOptions(req);
@@ -40,7 +42,8 @@ Deno.serve(async (req) => {
     .single();
   if (fetchError || !material) return errorResponse('Material not found', 404);
 
-  const isMedia = isMediaMimeType(material.mime_type);
+  const isYouTube = material.source_type === 'youtube';
+  const isMedia = isYouTube || isMediaMimeType(material.mime_type);
 
   // Metadata-only re-sync of a media material that hasn't finished
   // transcribing: nothing to re-import yet — check-material reads the row
@@ -55,8 +58,41 @@ Deno.serve(async (req) => {
     .eq('id', material.id);
 
   try {
+    // YouTube full sync (also the retry path): re-fetch the caption
+    // transcript and re-import it — no Storage file, no transcription job.
+    if (isYouTube && !body.metadata_only) {
+      const videoId = parseYouTubeVideoId(material.source_url ?? '');
+      if (!videoId) throw new Error('This material has no valid YouTube link.');
+
+      const transcript = await fetchYouTubeTranscript(videoId);
+      const transcriptObject = transcriptObjectName(user.id, material.id);
+      await uploadObject(transcriptObject, transcript, 'text/plain; charset=utf-8');
+
+      const operationName = await importMaterialDocument({
+        materialId: material.id,
+        userId: user.id,
+        folderId: material.folder_id,
+        title: material.title,
+        fileName: material.file_name,
+        mimeType: 'text/plain',
+        gcsObject: transcriptObject,
+      });
+
+      const { data: updated } = await admin
+        .from('materials')
+        .update({
+          transcript_object: transcriptObject,
+          index_operation: operationName,
+          status: 'indexing',
+        })
+        .eq('id', material.id)
+        .select()
+        .single();
+      return jsonResponse({ material: updated });
+    }
+
     let gcsObject = material.gcs_object as string | null;
-    const needsCopy = !body.metadata_only || !gcsObject;
+    const needsCopy = !isYouTube && (!body.metadata_only || !gcsObject);
 
     if (needsCopy) {
       gcsObject = contentObjectName(user.id, material.id, material.file_name);
@@ -73,19 +109,9 @@ Deno.serve(async (req) => {
       await uploadObject(gcsObject, fileResponse.body, material.mime_type);
     }
 
-    // Media with a fresh copy: (re)transcribe. Stale transcript/error objects
-    // are removed first so check-material can't mistake them for this run's.
+    // Media with a fresh copy: (re)transcribe from the GCS object.
     if (isMedia && needsCopy) {
-      const transcriptObject = transcriptObjectName(user.id, material.id);
-      const errorObject = transcriptErrorObjectName(user.id, material.id);
-      await deleteObject(transcriptObject);
-      await deleteObject(errorObject);
-      await runTranscribeJob({
-        inputObject: gcsObject!,
-        inputMimeType: material.mime_type,
-        transcriptObject,
-        errorObject,
-      });
+      await startTranscription(user.id, material.id, gcsObject!);
 
       const { data: updated } = await admin
         .from('materials')

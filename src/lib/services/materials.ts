@@ -16,6 +16,20 @@ export async function listMaterials(
   return { data: data as Material[] | null, error: error?.message ?? null };
 }
 
+// Adds a YouTube lecture/video by link. The edge function validates the URL,
+// fetches the video title, and starts transcription; from there the material
+// polls through the normal transcribing -> indexing lifecycle.
+export async function addYouTubeMaterial(
+  url: string,
+  folderId: string | null,
+): Promise<ServiceResult<Material>> {
+  const { data, error } = await invokeFunction<{ material: Material }>(
+    'add-youtube-material',
+    { url: url.trim(), folder_id: folderId },
+  );
+  return { data: data?.material ?? null, error };
+}
+
 // Kicks off (or retries) the GCS copy + Vertex AI Search import.
 export async function syncMaterial(
   materialId: string,

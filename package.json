@@ -52,7 +52,12 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "build:web": "expo export --platform web"
+    "build:web": "expo export --platform web",
+    "deploy:db": "npx supabase db push",
+    "deploy:functions": "npx supabase functions deploy",
+    "deploy:transcribe": "CLOUDSDK_ACTIVE_CONFIG_NAME=personal gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job --region us-central1 --project grappnel",
+    "deploy:backend": "npm run deploy:db && npm run deploy:functions && npm run deploy:transcribe"
   },
-  "private": true
+  "private": true,
+  "packageManager": "pnpm@10.18.2+sha512.9fb969fa749b3ade6035e0f109f0b8a60b5d08a1a87fdf72e337da90dcc93336e2280ca4e44f2358a649b83c17959e9993e777c2080879f3801e6f0d999ad3dd"
 }

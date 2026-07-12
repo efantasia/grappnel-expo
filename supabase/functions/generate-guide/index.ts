@@ -24,31 +24,80 @@ Requirements:
 - Organize the body into clear sections with ## headings; use bullet points, tables, and **bold key terms** where helpful.
 - Include a "Key Terms" section defining important vocabulary.
 - Include a "Self-Check Questions" section with 5-8 questions (answers in a separate "Answers" section at the end).
-- Each excerpt is labeled with the file it came from. When a point comes from a specific source, cite it inline like [Source: <file name>], using the file name exactly as it appears in the excerpt label.
+- Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label.
+- Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
+- Outside of citations, never reproduce the bracketed timestamp markers in the guide text.
 - If the excerpts only partially cover the topic, cover what they contain and add a short "Gaps to Review" note listing what the student should look up in their materials.
 - Do not invent facts that are not supported by the excerpts.`;
 
-// The materials table is the source of truth for file names; the titles
+interface SourceInfo {
+  name: string; // the citation label: file name for uploads, title for YouTube
+  url: string | null;
+}
+
+// The materials table is the source of truth for source names; the titles
 // Vertex returns with chunks can degrade to GCS object names (material ids).
-async function fileNamesByMaterial(
+async function sourcesByMaterial(
   admin: SupabaseClient,
   userId: string,
   chunks: RetrievedChunk[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, SourceInfo>> {
   const ids = [...new Set(chunks.map((c) => c.materialId).filter(Boolean))];
   if (ids.length === 0) return new Map();
   const { data } = await admin
     .from('materials')
-    .select('id, file_name')
+    .select('id, file_name, title, source_type, source_url')
     .in('id', ids)
     .eq('user_id', userId);
-  return new Map((data ?? []).map((m) => [m.id as string, m.file_name as string]));
+  return new Map(
+    (data ?? []).map((m) => [
+      m.id as string,
+      {
+        name: (m.source_type === 'youtube' ? m.title : m.file_name) as string,
+        url: (m.source_url as string | null) ?? null,
+      },
+    ]),
+  );
 }
 
-function buildContext(chunks: RetrievedChunk[], fileNames: Map<string, string>): string {
+function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>): string {
   return chunks
-    .map((chunk, i) => `[${i + 1}] ${fileNames.get(chunk.materialId) ?? chunk.title}\n${chunk.content}`)
+    .map((chunk, i) => `[${i + 1}] ${sources.get(chunk.materialId)?.name ?? chunk.title}\n${chunk.content}`)
     .join('\n\n---\n\n');
+}
+
+function timestampToSeconds(ts: string): number | null {
+  const parts = ts.split(':').map(Number);
+  if (parts.length < 2 || parts.length > 3 || parts.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+// Gemini cites plain "[Source: <name> @ 12:04]"; for sources that have a URL
+// (YouTube lectures) this rewrites the citation into a Markdown link that
+// jumps to that moment (…&t=724s). Done deterministically here rather than
+// trusting the model to construct URLs.
+function linkifyCitations(content: string, sources: Map<string, SourceInfo>): string {
+  const urlByName = new Map<string, string>();
+  for (const source of sources.values()) {
+    if (source.url) urlByName.set(source.name, source.url);
+  }
+  if (urlByName.size === 0) return content;
+
+  return content.replace(
+    /\[Source:\s*([^\]@]+?)(?:\s*@\s*(\d{1,2}(?::\d{2}){1,2}))?\]/g,
+    (citation, name: string, ts: string | undefined) => {
+      const url = urlByName.get(name.trim());
+      if (!url) return citation;
+      const seconds = ts ? timestampToSeconds(ts) : null;
+      const href =
+        seconds !== null
+          ? `${url}${url.includes('?') ? '&' : '?'}t=${seconds}s`
+          : url;
+      return `[${citation.slice(1, -1)}](${href})`;
+    },
+  );
 }
 
 async function runGeneration(
@@ -78,16 +127,16 @@ async function runGeneration(
       return;
     }
 
-    const fileNames = await fileNamesByMaterial(admin, userId, chunks);
+    const sources = await sourcesByMaterial(admin, userId, chunks);
     const content = await generateText(
       SYSTEM_PROMPT,
-      `Topic: ${topic}\n\nExcerpts from my materials:\n\n${buildContext(chunks, fileNames)}`,
+      `Topic: ${topic}\n\nExcerpts from my materials:\n\n${buildContext(chunks, sources)}`,
     );
 
     await admin
       .from('study_guides')
       .update({
-        content,
+        content: linkifyCitations(content, sources),
         status: 'complete',
         source_count: new Set(chunks.map((c) => c.materialId)).size,
         error_message: null,

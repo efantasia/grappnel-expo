@@ -21,6 +21,8 @@ export type MaterialStatus =
   | 'indexed'
   | 'error';
 
+export type MaterialSourceType = 'upload' | 'youtube';
+
 export interface Material {
   id: string;
   user_id: string;
@@ -29,7 +31,9 @@ export interface Material {
   file_name: string;
   mime_type: string;
   file_size: number | null;
-  storage_path: string;
+  source_type: MaterialSourceType;
+  source_url: string | null;
+  storage_path: string | null;
   gcs_object: string | null;
   transcript_object: string | null;
   status: MaterialStatus;

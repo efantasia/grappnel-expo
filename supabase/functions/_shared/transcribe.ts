@@ -7,6 +7,7 @@
 
 import { getGoogleAccessToken } from './google-auth.ts';
 import { gcpConfig } from './config.ts';
+import { deleteObject } from './gcs.ts';
 
 export function isMediaMimeType(mimeType: string): boolean {
   return mimeType.startsWith('audio/') || mimeType.startsWith('video/');
@@ -25,12 +26,11 @@ export function transcriptErrorObjectName(userId: string, materialId: string): s
 // Starts one execution of the transcription job for a material already
 // copied to GCS. Fire-and-forget: completion is observed via the transcript
 // or error object, not the execution.
-export async function runTranscribeJob(input: {
-  inputObject: string;
-  inputMimeType: string;
-  transcriptObject: string;
-  errorObject: string;
-}): Promise<void> {
+export async function runTranscribeJob(
+  inputObject: string,
+  transcriptObject: string,
+  errorObject: string,
+): Promise<void> {
   const token = await getGoogleAccessToken();
   const jobPath = `projects/${gcpConfig.projectId}/locations/${gcpConfig.transcribeRegion}/jobs/${gcpConfig.transcribeJob}`;
   const response = await fetch(`https://run.googleapis.com/v2/${jobPath}:run`, {
@@ -44,10 +44,9 @@ export async function runTranscribeJob(input: {
         containerOverrides: [
           {
             env: [
-              { name: 'INPUT_OBJECT', value: input.inputObject },
-              { name: 'INPUT_MIME', value: input.inputMimeType },
-              { name: 'TRANSCRIPT_OBJECT', value: input.transcriptObject },
-              { name: 'ERROR_OBJECT', value: input.errorObject },
+              { name: 'INPUT_OBJECT', value: inputObject },
+              { name: 'TRANSCRIPT_OBJECT', value: transcriptObject },
+              { name: 'ERROR_OBJECT', value: errorObject },
             ],
           },
         ],
@@ -58,4 +57,18 @@ export async function runTranscribeJob(input: {
     throw new Error(`Transcription job start failed (${response.status}): ${await response.text()}`);
   }
   await response.body?.cancel();
+}
+
+// Clears stale transcript/error markers from any previous run (so
+// check-material can't mistake them for this run's) and starts the job.
+export async function startTranscription(
+  userId: string,
+  materialId: string,
+  inputObject: string,
+): Promise<void> {
+  const transcriptObject = transcriptObjectName(userId, materialId);
+  const errorObject = transcriptErrorObjectName(userId, materialId);
+  await deleteObject(transcriptObject);
+  await deleteObject(errorObject);
+  await runTranscribeJob(inputObject, transcriptObject, errorObject);
 }

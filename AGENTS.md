@@ -12,9 +12,11 @@ before writing Expo-API code.
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run lint` — `expo lint`
 - `npm run build:web` — web export to `dist/`
-- `npx supabase db push` / `npx supabase functions deploy` — deploy backend
-- `gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job
-  --region us-central1` — deploy the transcription job
+- `npm run deploy:db` / `npm run deploy:functions` — push migrations /
+  deploy edge functions (Supabase)
+- `npm run deploy:transcribe` — deploy the transcription Cloud Run job
+  (uses the `personal` gcloud config; run `gcloud auth login` if expired)
+- `npm run deploy:backend` — all three in order
 
 ## Architecture rules
 
@@ -36,6 +38,20 @@ before writing Expo-API code.
   `check-material` watches for those objects and imports the transcript
   (`transcript_object` on the row) as `text/plain`. Re-deploy the job after
   changing it — `npx supabase functions deploy` does NOT cover it.
+- Transcripts are timestamped paragraphs (`[12:04] Speaker 1: …` from Velma's
+  utterances for uploads; `[12:04] …` from YouTube captions), so retrieved
+  chunks carry timestamps. `generate-guide` has Gemini cite
+  `[Source: <name> @ 12:04]` and then linkifies citations itself for
+  materials with a `source_url` (appending `&t=<seconds>s`) — never let the
+  model construct URLs.
+- YouTube materials (`source_type = 'youtube'`, `mime_type = 'video/youtube'`,
+  NULL `storage_path`) are created by `add-youtube-material` (link → video id
+  → oEmbed title). Their transcript is the video's own caption track
+  (`npm:youtube-transcript-plus` in `_shared/youtube.ts`) fetched in the edge
+  function — no Cloud Run job, no `transcribing` status; they go straight to
+  `indexing`. Videos without captions are rejected with a clear error. Only
+  the parsed 11-char video id is trusted; the canonical watch URL is rebuilt
+  from it before it reaches the caption fetch or citation links.
 - Renaming/moving a material must re-sync the search index metadata
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row
@@ -63,3 +79,9 @@ before writing Expo-API code.
   serving reads `supabase/functions/.env` (gitignored).
 - The Vertex datastore must be created with layout parsing + chunking config
   (scripts/setup-gcp.sh does this) or CHUNKS search mode returns nothing.
+- YouTube bot-walls datacenter IPs (edge runtime included) with
+  LOGIN_REQUIRED "confirm you're not a bot" playability, which breaks
+  caption fetching. `_shared/youtube.ts` detects this via the watch page's
+  playabilityStatus and reports it distinctly; the fix is the
+  `YOUTUBE_PROXY_URL` secret (rotating residential proxy — only YouTube
+  requests are routed through it).
