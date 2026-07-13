@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  View,
 } from 'react-native';
 
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,10 @@ import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { listFolders } from '@/lib/services/folders';
 import { generateGuide } from '@/lib/services/guides';
+import { listTopics, toTopicSuggestions, TopicSuggestion } from '@/lib/services/topics';
 import { Folder } from '@/lib/types';
+
+const MAX_TOPIC_SUGGESTIONS = 12;
 
 export default function GenerateScreen() {
   const colors = useThemeColors();
@@ -28,6 +32,7 @@ export default function GenerateScreen() {
   const [folderId, setFolderId] = useState<string | null>(params.folderId ?? null);
   const [topic, setTopic] = useState('');
   const [title, setTitle] = useState('');
+  const [suggestions, setSuggestions] = useState<TopicSuggestion[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -38,6 +43,20 @@ export default function GenerateScreen() {
         if (data) setFolders(data);
       });
     }, []),
+  );
+
+  // Topics Gemini extracted from the selected sources, offered as one-tap
+  // starting points for the guide topic.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      listTopics(folderId).then(({ data }) => {
+        if (!cancelled) setSuggestions(toTopicSuggestions(data ?? []));
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [folderId]),
   );
 
   const handleGenerate = async () => {
@@ -77,6 +96,35 @@ export default function GenerateScreen() {
           numberOfLines={3}
           style={styles.topicInput}
         />
+        {suggestions.length > 0 ? (
+          <>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>
+              Topics found in your materials
+            </Text>
+            <View style={styles.chips}>
+              {suggestions.slice(0, MAX_TOPIC_SUGGESTIONS).map((suggestion) => {
+                const selected = topic === suggestion.name;
+                return (
+                  <Pressable
+                    key={suggestion.name}
+                    onPress={() => setTopic(suggestion.name)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: selected ? colors.primarySoft : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: selected ? colors.primary : colors.text, fontSize: 14 }}>
+                      {suggestion.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
         <TextField
           label="Guide title (optional)"
           value={title}
@@ -144,6 +192,17 @@ const styles = StyleSheet.create({
   topicInput: {
     minHeight: 84,
     textAlignVertical: 'top',
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  chip: {
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
   },
   picker: {
     flexDirection: 'row',

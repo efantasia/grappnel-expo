@@ -52,9 +52,15 @@ Deno.serve(async (req) => {
     return jsonResponse({ material });
   }
 
+  // Full syncs (re)ingest content, so queue a fresh topic extraction too;
+  // metadata-only re-syncs keep the already-extracted topics.
   await admin
     .from('materials')
-    .update({ status: 'syncing', error_message: null })
+    .update({
+      status: 'syncing',
+      error_message: null,
+      ...(body.metadata_only ? {} : { topics_status: 'pending', topics_error: null }),
+    })
     .eq('id', material.id);
 
   try {

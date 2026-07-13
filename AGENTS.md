@@ -52,6 +52,17 @@ before writing Expo-API code.
   `indexing`. Videos without captions are rejected with a clear error. Only
   the parsed 11-char video id is trusted; the canonical watch URL is rebuilt
   from it before it reaches the caption fetch or citation links.
+- After a material lands on `indexed`, `check-material` starts background
+  topic extraction (`_shared/topics.ts`): Gemini reads the content (GCS text
+  for transcripts/plain text; the Vertex-parsed chunks via v1alpha
+  `chunks.list` for PDF/Office uploads, falling back to `searchChunks`) and
+  writes one `material_topics` row per topic, classified under all three
+  systems — OpenAlex 4-level hierarchy (one column per level), Digital
+  Commons 3 tiers, Wikipedia categories. `materials.topics_status` tracks it
+  (`pending → extracting → extracted | error`); full re-syncs reset it to
+  `pending`, metadata-only re-syncs keep the extracted topics. The generate
+  screen surfaces deduped topic names as one-tap suggestions
+  (`src/lib/services/topics.ts`).
 - Renaming/moving a material must re-sync the search index metadata
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row

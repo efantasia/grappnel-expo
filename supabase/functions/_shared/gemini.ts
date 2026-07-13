@@ -14,9 +14,10 @@ function geminiEndpoint(): string {
   return `${host}/v1/projects/${projectId}/locations/${geminiLocation}/publishers/google/models/${geminiModel}:generateContent`;
 }
 
-export async function generateText(
+async function callGemini(
   systemInstruction: string,
   userPrompt: string,
+  generationConfig: Record<string, unknown>,
 ): Promise<string> {
   const token = await getGoogleAccessToken();
   const response = await fetch(geminiEndpoint(), {
@@ -28,10 +29,7 @@ export async function generateText(
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemInstruction }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 16384,
-      },
+      generationConfig,
     }),
   });
   if (!response.ok) {
@@ -45,4 +43,34 @@ export async function generateText(
     throw new Error(`Gemini returned no text (${reason})`);
   }
   return text;
+}
+
+export function generateText(
+  systemInstruction: string,
+  userPrompt: string,
+): Promise<string> {
+  return callGemini(systemInstruction, userPrompt, {
+    temperature: 0.3,
+    maxOutputTokens: 16384,
+  });
+}
+
+// Constrained JSON generation (responseSchema uses the Vertex AI OpenAPI
+// schema subset with UPPERCASE type names). Returns the parsed object.
+export async function generateJson<T>(
+  systemInstruction: string,
+  userPrompt: string,
+  responseSchema: Record<string, unknown>,
+): Promise<T> {
+  const text = await callGemini(systemInstruction, userPrompt, {
+    temperature: 0.2,
+    maxOutputTokens: 16384,
+    responseMimeType: 'application/json',
+    responseSchema,
+  });
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Gemini returned invalid JSON: ${text.slice(0, 200)}`);
+  }
 }

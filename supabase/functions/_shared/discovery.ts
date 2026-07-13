@@ -125,6 +125,42 @@ export async function deleteDocument(materialId: string): Promise<void> {
   }
 }
 
+// Parsed chunks of an indexed document, in document order — the same text
+// Vertex extracted at import time, so it works for every format the
+// datastore accepts (PDF, DOCX, PPTX, …). chunks.list is only exposed on
+// the v1alpha surface; callers should fall back to searchChunks if it fails.
+export async function listDocumentChunks(
+  materialId: string,
+  maxChars: number,
+): Promise<string[]> {
+  assertUuid(materialId, 'material_id');
+  const token = await getGoogleAccessToken();
+  const documentPath = `${dataStorePath()}/branches/default_branch/documents/${materialId}`;
+  const contents: string[] = [];
+  let totalChars = 0;
+  let pageToken = '';
+  do {
+    const url =
+      `${discoveryApiBase('v1alpha')}/${documentPath}/chunks?pageSize=100` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Chunk list failed (${response.status}): ${await response.text()}`);
+    }
+    const data = await response.json();
+    for (const chunk of data.chunks ?? []) {
+      if (!chunk.content) continue;
+      contents.push(chunk.content as string);
+      totalChars += chunk.content.length;
+      if (totalChars >= maxChars) return contents;
+    }
+    pageToken = data.nextPageToken ?? '';
+  } while (pageToken);
+  return contents;
+}
+
 export interface SearchScope {
   userId: string;
   folderId?: string | null;

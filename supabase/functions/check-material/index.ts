@@ -4,12 +4,31 @@
 //                 imports it into the search index) or error marker.
 //   indexing:     polls the Vertex AI Search import operation
 //                 (indexing -> indexed | error).
+// When a material lands on 'indexed' with topics still pending, Gemini topic
+// extraction runs in the background (EdgeRuntime.waitUntil) — clients don't
+// wait on it; material_topics rows appear when it finishes.
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
 import { getImportOperation, importMaterialDocument } from '../_shared/discovery.ts';
 import { objectExists, readObjectText } from '../_shared/gcs.ts';
 import { transcriptObjectName, transcriptErrorObjectName } from '../_shared/transcribe.ts';
+import { extractMaterialTopics, TopicSourceMaterial } from '../_shared/topics.ts';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+async function startTopicExtraction(
+  admin: SupabaseClient,
+  material: TopicSourceMaterial,
+): Promise<void> {
+  const extraction = extractMaterialTopics(admin, material);
+  if (typeof EdgeRuntime !== 'undefined') {
+    EdgeRuntime.waitUntil(extraction);
+  } else {
+    await extraction;
+  }
+}
 
 // A transcription run that has produced neither a transcript nor an error
 // marker after this long is presumed dead (job crash without cleanup).
@@ -98,6 +117,11 @@ Deno.serve(async (req) => {
     }
 
     if (material.status !== 'indexing' || !material.index_operation) {
+      // Recover extractions the indexed transition missed (e.g. the runtime
+      // died before the background task finished claiming the material).
+      if (material.status === 'indexed' && material.topics_status === 'pending') {
+        await startTopicExtraction(admin, material);
+      }
       return jsonResponse({ material });
     }
 
@@ -114,6 +138,9 @@ Deno.serve(async (req) => {
       .eq('id', material.id)
       .select()
       .single();
+    if (updated && !status.error) {
+      await startTopicExtraction(admin, updated);
+    }
     return jsonResponse({ material: updated });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

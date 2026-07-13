@@ -41,12 +41,13 @@ export const gcpConfig = {
   },
 };
 
-// Discovery Engine REST base URL is location-aware.
-export function discoveryApiBase(): string {
+// Discovery Engine REST base URL is location-aware. Some methods (e.g.
+// documents.chunks.list) are only exposed on v1alpha.
+export function discoveryApiBase(version: 'v1' | 'v1alpha' = 'v1'): string {
   const location = gcpConfig.searchLocation;
   return location === 'global'
-    ? 'https://discoveryengine.googleapis.com/v1'
-    : `https://${location}-discoveryengine.googleapis.com/v1`;
+    ? `https://discoveryengine.googleapis.com/${version}`
+    : `https://${location}-discoveryengine.googleapis.com/${version}`;
 }
 
 export function dataStorePath(): string {
