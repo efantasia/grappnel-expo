@@ -56,6 +56,26 @@ else
     --uniform-bucket-level-access
 fi
 
+# Browser clients PUT uploads directly to GCS resumable-session URIs
+# (create-upload edge function mints them), which needs CORS on the bucket.
+# The bucket stays private — CORS only lets browsers make the request.
+echo "==> Setting bucket CORS for direct browser uploads"
+CORS_FILE="$(mktemp)"
+cat > "${CORS_FILE}" <<'JSON'
+[
+  {
+    "origin": ["*"],
+    "method": ["PUT"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]
+JSON
+gcloud storage buckets update "gs://${BUCKET}" \
+  --project "${PROJECT_ID}" \
+  --cors-file="${CORS_FILE}"
+rm -f "${CORS_FILE}"
+
 echo "==> Creating Vertex AI Search datastore ${DATASTORE_ID}"
 if auth_curl -o /dev/null -w '%{http_code}' "${API}/${PARENT}/dataStores/${DATASTORE_ID}" | grep -q 200; then
   echo "    datastore already exists, skipping"

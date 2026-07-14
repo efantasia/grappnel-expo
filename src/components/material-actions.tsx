@@ -82,7 +82,12 @@ export function MaterialActions({
     finish();
   };
 
-  const canRetry = material.status === 'error' || material.status === 'uploaded';
+  // 'uploading' is retryable so a row abandoned mid-upload (app closed)
+  // resolves to a clear error instead of sitting on "Uploading…" forever.
+  const canRetry =
+    material.status === 'error' ||
+    material.status === 'uploaded' ||
+    material.status === 'uploading';
 
   return (
     <>

@@ -21,14 +21,24 @@ before writing Expo-API code.
 ## Architecture rules
 
 - **Everything is user-scoped.** Postgres RLS keys on `auth.uid() = user_id`;
-  Storage paths and GCS objects are prefixed `<user_id>/`; every Vertex AI
-  Search query MUST include the `user_id: ANY("<uid>")` filter
-  (`supabase/functions/_shared/discovery.ts` enforces UUID validation to keep
-  filter expressions injection-safe).
+  GCS objects are namespaced by user id (`content/<user_id>/…`,
+  `transcripts/<user_id>/…`); every Vertex AI Search query MUST include the
+  `user_id: ANY("<uid>")` filter (`supabase/functions/_shared/discovery.ts`
+  enforces UUID validation to keep filter expressions injection-safe).
 - Edge functions use the service role (RLS bypassed) and therefore must
   always add `.eq('user_id', user.id)` to queries.
-- Material lifecycle: `uploaded → syncing → [transcribing →] indexing →
-  indexed | error` (statuses set by `sync-material` / `check-material`).
+- Uploads go **directly to GCS** — no Supabase Storage hop. `create-upload`
+  validates type/size, inserts the row (status `uploading`, `gcs_object`
+  preassigned server-side), and mints a GCS resumable upload session pinned
+  to that object name / content type / exact byte length; the client PUTs
+  the bytes to the session URI (streaming from disk on native) and then
+  calls `sync-material`, which verifies the object exists before ingesting.
+  Browser PUTs require the bucket CORS config set by `scripts/setup-gcp.sh`.
+  `storage_path` (and the `uploaded` status) survive only on legacy rows
+  that predate this flow.
+- Material lifecycle: `uploading → syncing → [transcribing →] indexing →
+  indexed | error` (statuses set by `create-upload` / `sync-material` /
+  `check-material`).
   Vertex imports are **INCREMENTAL** with one JSONL manifest per material —
   never use FULL reconciliation, it would purge other users' documents.
 - Audio/video materials are transcribed before indexing: `sync-material`

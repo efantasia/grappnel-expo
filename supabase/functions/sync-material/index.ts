@@ -1,16 +1,16 @@
-// Copies an uploaded material from Supabase Storage into the GCS content
-// bucket, then triggers indexing: documents go straight to an incremental
-// Vertex AI Search import; audio/video first runs the transcription job
-// (ffmpeg + Velma) and check-material imports the transcript when it lands.
-// YouTube materials skip both the copy and the job — their timestamped
-// transcript is re-fetched from the video's captions and imported directly.
-// Also used to re-sync metadata (title/folder changes) without re-copying
-// the file by passing metadata_only: true.
+// Triggers indexing for a material whose bytes are already in GCS (the
+// client uploads directly via a create-upload resumable session): documents
+// go straight to an incremental Vertex AI Search import; audio/video first
+// runs the transcription job (ffmpeg + Velma) and check-material imports the
+// transcript when it lands. YouTube materials have no uploaded file — their
+// timestamped transcript is re-fetched from the video's captions and
+// imported directly. Also used to re-sync metadata (title/folder changes)
+// without re-ingesting content by passing metadata_only: true.
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
-import { uploadObject } from '../_shared/gcs.ts';
-import { importMaterialDocument, contentObjectName } from '../_shared/discovery.ts';
+import { uploadObject, objectExists } from '../_shared/gcs.ts';
+import { importMaterialDocument } from '../_shared/discovery.ts';
 import {
   isMediaMimeType,
   startTranscription,
@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
 
   try {
     // YouTube full sync (also the retry path): re-fetch the caption
-    // transcript and re-import it — no Storage file, no transcription job.
+    // transcript and re-import it — no uploaded file, no transcription job.
     if (isYouTube && !body.metadata_only) {
       const videoId = parseYouTubeVideoId(material.source_url ?? '');
       if (!videoId) throw new Error('This material has no valid YouTube link.');
@@ -97,32 +97,24 @@ Deno.serve(async (req) => {
       return jsonResponse({ material: updated });
     }
 
-    let gcsObject = material.gcs_object as string | null;
-    const needsCopy = !isYouTube && (!body.metadata_only || !gcsObject);
-
-    if (needsCopy) {
-      gcsObject = contentObjectName(user.id, material.id, material.file_name);
-      const { data: signed, error: signError } = await admin.storage
-        .from('materials')
-        .createSignedUrl(material.storage_path, 600);
-      if (signError || !signed) {
-        throw new Error(`Could not read uploaded file: ${signError?.message ?? 'no signed URL'}`);
-      }
-      const fileResponse = await fetch(signed.signedUrl);
-      if (!fileResponse.ok || !fileResponse.body) {
-        throw new Error(`Download from storage failed (${fileResponse.status})`);
-      }
-      await uploadObject(gcsObject, fileResponse.body, material.mime_type);
+    // YouTube reaches here only for metadata-only re-syncs (full syncs
+    // returned above); everything else must have its bytes in GCS already
+    // (create-upload preassigns gcs_object and the client streams to it).
+    const gcsObject = material.gcs_object as string | null;
+    if (!isYouTube && !gcsObject) {
+      throw new Error('This material has no uploaded file — delete it and upload it again.');
+    }
+    if (!body.metadata_only && !(await objectExists(gcsObject!))) {
+      throw new Error('The upload never finished — delete this material and upload it again.');
     }
 
-    // Media with a fresh copy: (re)transcribe from the GCS object.
-    if (isMedia && needsCopy) {
+    // Media full sync: (re)transcribe from the GCS object.
+    if (isMedia && !body.metadata_only) {
       await startTranscription(user.id, material.id, gcsObject!);
 
       const { data: updated } = await admin
         .from('materials')
         .update({
-          gcs_object: gcsObject,
           transcript_object: null,
           index_operation: null,
           status: 'transcribing',
@@ -148,7 +140,6 @@ Deno.serve(async (req) => {
     const { data: updated } = await admin
       .from('materials')
       .update({
-        gcs_object: gcsObject,
         index_operation: operationName,
         status: 'indexing',
       })

@@ -63,7 +63,9 @@ export async function deleteMaterial(
 }
 
 // Title/folder live in the search index's structData too, so after a local
-// update we re-sync metadata (no file re-copy) for anything already in GCS.
+// update we re-sync metadata (no content re-ingest) for anything already in
+// GCS. Rows still uploading are skipped — gcs_object is preassigned before
+// the bytes exist, and the post-upload sync reads the fresh row anyway.
 async function updateAndResync(
   materialId: string,
   patch: Partial<Pick<Material, 'title' | 'folder_id'>>,
@@ -76,7 +78,7 @@ async function updateAndResync(
     .single();
   if (error) return { data: null, error: error.message };
   const material = data as Material;
-  if (material.gcs_object) {
+  if (material.gcs_object && material.status !== 'uploading') {
     const synced = await syncMaterial(materialId, true);
     if (synced.data) return synced;
   }

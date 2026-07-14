@@ -413,6 +413,9 @@ enabled = true
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
+[functions.create-upload]
+verify_jwt = true
+
 [functions.sync-material]
 verify_jwt = true
 

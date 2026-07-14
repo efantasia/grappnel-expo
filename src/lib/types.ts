@@ -14,7 +14,8 @@ export interface Folder {
 }
 
 export type MaterialStatus =
-  | 'uploaded'
+  | 'uploading'
+  | 'uploaded' // legacy: file in Supabase Storage, pre-direct-to-GCS
   | 'syncing'
   | 'transcribing'
   | 'indexing'

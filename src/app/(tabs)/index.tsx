@@ -85,7 +85,7 @@ export default function LibraryScreen() {
     if (assets.length === 0) return;
     setUploading(true);
     setNotice(null);
-    const outcomes = await uploadMaterials(user.id, null, assets);
+    const outcomes = await uploadMaterials(null, assets);
     setUploading(false);
     const failures = outcomes.filter((o) => o.error);
     if (failures.length > 0) {

@@ -1,6 +1,6 @@
 // Deletes a material everywhere: Vertex AI Search document, GCS content +
-// manifest objects, the Supabase Storage upload, and finally the DB row.
-// Each cleanup step tolerates "already gone" so retries converge.
+// manifest objects, and finally the DB row. Each cleanup step tolerates
+// "already gone" so retries converge.
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
@@ -46,7 +46,8 @@ Deno.serve(async (req) => {
       await deleteObject(transcriptObjectName(user.id, material.id));
       await deleteObject(transcriptErrorObjectName(user.id, material.id));
     }
-    // YouTube materials have no Storage upload.
+    // Only legacy rows (uploaded before direct-to-GCS) still have a
+    // Supabase Storage file to clean up.
     if (material.storage_path) {
       await admin.storage.from('materials').remove([material.storage_path]);
     }

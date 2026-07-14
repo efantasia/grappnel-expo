@@ -6,6 +6,7 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import { GuideStatus, MaterialStatus } from '@/lib/types';
 
 const LABELS: Record<MaterialStatus | GuideStatus, string> = {
+  uploading: 'Uploading…',
   uploaded: 'Queued',
   syncing: 'Syncing…',
   transcribing: 'Transcribing…',

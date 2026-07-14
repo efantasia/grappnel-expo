@@ -11,14 +11,15 @@ and the topic's canonical Wikipedia article), so the **Explore** tab lets
 students browse the topics across their materials and start a guide from any
 of them.
 
-**Stack:** Expo (iOS / Android / web) · Supabase (auth, Postgres, Storage,
-edge functions) · Google Cloud (GCS, Vertex AI Search, Gemini).
+**Stack:** Expo (iOS / Android / web) · Supabase (auth, Postgres, edge
+functions) · Google Cloud (GCS, Vertex AI Search, Gemini).
 
 ## How it works
 
 ```
-upload (app) ─→ Supabase Storage (materials/<user_id>/…)
-                     │  sync-material edge function
+upload (app) ─→ PUT to a GCS resumable-session URL
+                     │  (create-upload edge function mints the session;
+                     │   sync-material then triggers ingestion)
                      ▼
                GCS bucket  content/<user_id>/<material_id>.<ext>
                            metadata/<user_id>/<material_id>.jsonl
@@ -48,8 +49,8 @@ YouTube link ─→ transcripts/<user_id>/<material_id>.txt
 ```
 
 Every layer is scoped by user id: Postgres RLS (`auth.uid() = user_id`),
-Storage policies (per-user folders), GCS object prefixes, and a mandatory
-`user_id` filter on every Vertex AI Search query.
+GCS object prefixes (with object names assigned server-side), and a
+mandatory `user_id` filter on every Vertex AI Search query.
 
 ## Setup
 
@@ -77,7 +78,8 @@ gcloud config configurations activate personal
 VELMA_API_KEY=<modulate-console-admin-key> ./scripts/setup-gcp.sh <gcp-project-id>
 ```
 
-This creates the GCS bucket, the Vertex AI Search datastore (layout parser +
+This creates the GCS bucket (with CORS so browsers can PUT uploads
+directly), the Vertex AI Search datastore (layout parser +
 chunking, explicit filterable schema), a search engine, the
 `grappnel-transcribe` Cloud Run job (audio extraction + Velma transcription
 for audio/video uploads; the Modulate API key goes into Secret Manager), and
@@ -106,10 +108,11 @@ npm run build:web  # static web export in dist/
 
 | Function | Purpose |
 | --- | --- |
-| `sync-material` | Copy upload from Supabase Storage → GCS; documents trigger an incremental Vertex import, audio/video starts the `grappnel-transcribe` Cloud Run job, YouTube retries re-fetch the caption transcript. `metadata_only: true` re-syncs title/folder without re-copying. |
+| `create-upload` | Create the material row and mint a direct-to-GCS resumable upload session (object name, content type, and byte length pinned server-side); the client PUTs the file straight to GCS. |
+| `sync-material` | Ingest a material whose bytes are in GCS: documents trigger an incremental Vertex import, audio/video starts the `grappnel-transcribe` Cloud Run job, YouTube retries re-fetch the caption transcript. `metadata_only: true` re-syncs title/folder without re-ingesting. |
 | `add-youtube-material` | Add a YouTube video by link: validate the URL, fetch the title (oEmbed) and the video's caption track as a timestamped transcript (youtube-transcript-plus), create the material row, and start the Vertex import. |
 | `check-material` | Settle in-flight statuses: watch GCS for the transcript (then import it) while `transcribing`, poll the import operation while `indexing`. When a material lands on `indexed`, it kicks off background topic extraction: Gemini identifies the main topics and classifies each against the official OpenAlex taxonomy — the topic is selected from the seeded `openalex_topics` reference table (never free-typed; FK-enforced), carrying its subfield/field/domain IDs, description, keywords, and canonical Wikipedia article (`material_topics` rows, surfaced in the Explore tab and as topic suggestions when generating a guide). |
-| `delete-material` | Remove the search document, GCS objects (content + transcript), Storage file, and DB row. |
+| `delete-material` | Remove the search document, GCS objects (content + transcript), and DB row. |
 | `generate-guide` | Retrieve chunks (user-scoped, optional folder/material filter), generate a Markdown study guide with Gemini in the background, update the `study_guides` row. Citations carry transcript timestamps and link to the video at that moment for sources with a URL. |
 
 ## Supported sources

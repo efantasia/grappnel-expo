@@ -74,7 +74,7 @@ export default function FolderScreen() {
     if (assets.length === 0) return;
     setUploading(true);
     setNotice(null);
-    const outcomes = await uploadMaterials(user.id, id, assets);
+    const outcomes = await uploadMaterials(id, assets);
     setUploading(false);
     const failures = outcomes.filter((o) => o.error);
     if (failures.length > 0) {

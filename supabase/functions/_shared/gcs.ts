@@ -27,6 +27,41 @@ export async function uploadObject(
   }
 }
 
+// Starts a resumable upload session and returns the session URI, which
+// accepts the bytes with no further auth — safe to hand to the client for a
+// direct upload. The session is bound to the object name, content type, and
+// exact byte length declared here, so the client can't upload anything else.
+// Forwarding the browser's Origin makes GCS answer CORS on the session URI.
+export async function createResumableUploadSession(
+  objectName: string,
+  contentType: string,
+  contentLength: number,
+  origin?: string,
+): Promise<string> {
+  const token = await getGoogleAccessToken();
+  const url = `${UPLOAD_API}/b/${gcpConfig.gcsBucket}/o?uploadType=resumable&name=${encodeURIComponent(objectName)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'X-Upload-Content-Type': contentType,
+      'X-Upload-Content-Length': String(contentLength),
+      ...(origin ? { Origin: origin } : {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `GCS upload session failed for ${objectName} (${response.status}): ${await response.text()}`,
+    );
+  }
+  await response.body?.cancel();
+  const location = response.headers.get('location');
+  if (!location) {
+    throw new Error(`GCS upload session for ${objectName} returned no session URI`);
+  }
+  return location;
+}
+
 export async function objectExists(objectName: string): Promise<boolean> {
   const token = await getGoogleAccessToken();
   const url = `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o/${encodeURIComponent(objectName)}`;
