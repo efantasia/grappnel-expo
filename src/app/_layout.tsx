@@ -43,6 +43,7 @@ function RootLayoutNav() {
       <Stack.Screen name="auth/reset-password" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="folder/[id]" />
+      <Stack.Screen name="topic/[id]" />
       <Stack.Screen name="guide/[id]" />
       <Stack.Screen name="generate" options={{ presentation: 'modal' }} />
     </Stack>

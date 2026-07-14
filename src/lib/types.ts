@@ -47,24 +47,25 @@ export interface Material {
   updated_at: string;
 }
 
-// One main topic of a material, classified under three systems: the OpenAlex
-// 4-level hierarchy (one column per level), the bepress Digital Commons
-// 3-tier taxonomy, and Wikipedia categories. Extracted by Gemini after
-// indexing; a material usually has several.
+// One main topic of a material: a single official OpenAlex topic the material
+// covers. Extracted by Gemini after indexing (which matches content to the
+// authoritative openalex_topics list), a material usually has several. There is
+// no freeform label — the display name is the OpenAlex topic's display_name
+// (openalex_topic) and any description comes from the openalex_topics row.
 export interface MaterialTopic {
   id: string;
   user_id: string;
   material_id: string;
-  name: string;
-  summary: string | null;
   openalex_domain: string | null;
   openalex_field: string | null;
   openalex_subfield: string | null;
   openalex_topic: string | null;
-  digital_commons_tier1: string | null;
-  digital_commons_tier2: string | null;
-  digital_commons_tier3: string | null;
-  wikipedia_categories: string[];
+  openalex_domain_id: string | null;
+  openalex_field_id: string | null;
+  openalex_subfield_id: string | null;
+  openalex_topic_id: string;
+  wikipedia_url: string | null;
+  wikipedia_title: string | null;
   created_at: string;
 }
 

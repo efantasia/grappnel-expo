@@ -5,7 +5,11 @@ recorded lectures, YouTube videos — into study guides. Upload sources (or
 paste a YouTube link), organize them into folders, and generate topic-focused
 guides built only from your own materials via RAG. Media sources are
 transcribed with timestamps, and guide citations deep-link back to the moment
-in the video they came from.
+in the video they came from. Each source is auto-classified by topic against
+the official OpenAlex taxonomy (with real topic IDs, descriptions, keywords,
+and the topic's canonical Wikipedia article), so the **Explore** tab lets
+students browse the topics across their materials and start a guide from any
+of them.
 
 **Stack:** Expo (iOS / Android / web) · Supabase (auth, Postgres, Storage,
 edge functions) · Google Cloud (GCS, Vertex AI Search, Gemini).
@@ -104,7 +108,7 @@ npm run build:web  # static web export in dist/
 | --- | --- |
 | `sync-material` | Copy upload from Supabase Storage → GCS; documents trigger an incremental Vertex import, audio/video starts the `grappnel-transcribe` Cloud Run job, YouTube retries re-fetch the caption transcript. `metadata_only: true` re-syncs title/folder without re-copying. |
 | `add-youtube-material` | Add a YouTube video by link: validate the URL, fetch the title (oEmbed) and the video's caption track as a timestamped transcript (youtube-transcript-plus), create the material row, and start the Vertex import. |
-| `check-material` | Settle in-flight statuses: watch GCS for the transcript (then import it) while `transcribing`, poll the import operation while `indexing`. When a material lands on `indexed`, it kicks off background topic extraction: Gemini identifies the main topics and classifies each under the OpenAlex 4-level hierarchy, the Digital Commons 3-tier taxonomy, and Wikipedia categories (`material_topics` rows, surfaced as topic suggestions when generating a guide). |
+| `check-material` | Settle in-flight statuses: watch GCS for the transcript (then import it) while `transcribing`, poll the import operation while `indexing`. When a material lands on `indexed`, it kicks off background topic extraction: Gemini identifies the main topics and classifies each against the official OpenAlex taxonomy — the topic is selected from the seeded `openalex_topics` reference table (never free-typed; FK-enforced), carrying its subfield/field/domain IDs, description, keywords, and canonical Wikipedia article (`material_topics` rows, surfaced in the Explore tab and as topic suggestions when generating a guide). |
 | `delete-material` | Remove the search document, GCS objects (content + transcript), Storage file, and DB row. |
 | `generate-guide` | Retrieve chunks (user-scoped, optional folder/material filter), generate a Markdown study guide with Gemini in the background, update the `study_guides` row. Citations carry transcript timestamps and link to the video at that moment for sources with a URL. |
 

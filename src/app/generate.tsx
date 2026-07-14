@@ -26,11 +26,11 @@ const MAX_TOPIC_SUGGESTIONS = 12;
 export default function GenerateScreen() {
   const colors = useThemeColors();
   const router = useRouter();
-  const params = useLocalSearchParams<{ folderId?: string }>();
+  const params = useLocalSearchParams<{ folderId?: string; topic?: string }>();
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<string | null>(params.folderId ?? null);
-  const [topic, setTopic] = useState('');
+  const [topic, setTopic] = useState(params.topic ?? '');
   const [title, setTitle] = useState('');
   const [suggestions, setSuggestions] = useState<TopicSuggestion[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
