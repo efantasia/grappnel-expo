@@ -40,6 +40,7 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.0",
+    "supabase": "^2.109.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -52,6 +53,12 @@
     "typecheck": "tsc --noEmit",
     "build:web": "expo export --platform web",
     "topics:refresh": "node scripts/fetch-openalex-topics.mjs",
+    "supabase:start": "npx supabase start",
+    "supabase:stop": "npx supabase stop",
+    "supabase:restart": "npx supabase stop && npx supabase start",
+    "supabase:status": "npx supabase status",
+    "supabase:local:push": "npx supabase migration up --local",
+    "supabase:functions": "npx supabase functions serve --env-file ./supabase/functions/.env",
     "deploy:db": "npx supabase db push",
     "deploy:functions": "npx supabase functions deploy",
     "deploy:transcribe": "CLOUDSDK_ACTIVE_CONFIG_NAME=personal gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job --region us-central1 --project grappnel",
