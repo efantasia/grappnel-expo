@@ -65,9 +65,16 @@ interface CaptionSegment {
   duration: number;
 }
 
-// A new paragraph starts after this much video, so every search chunk
-// downstream contains several timestamp markers.
-const PARAGRAPH_MAX_SECONDS = 60;
+// Auto-generated caption tracks carry no sentence punctuation, so a
+// "sentence" would never end — break on time instead, keeping timestamps
+// dense enough to jump close to the right moment.
+const SENTENCE_MAX_SECONDS = 30;
+
+// Sentence-final punctuation, optionally wrapped in closing quotes/brackets,
+// at a whitespace boundary — so decimals ("3.14") don't split. Abbreviations
+// ("Dr.") do, which just adds a harmless extra timestamp.
+const SENTENCE_SPLIT_RE = /(?<=[.!?…]["')\]]*)\s+/;
+const SENTENCE_END_RE = /[.!?…]["')\]]*$/;
 
 // Caption-only cues like [Music] or [Applause] — dropped so the only
 // bracketed tokens in the transcript are our timestamp markers.
@@ -94,29 +101,42 @@ function decodeEntities(text: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-// Renders caption segments as timestamped paragraphs:
-//   [12:04] We can now define the derivative as …
-// — the same shape the Velma job writes for uploaded media, so guide
-// citation handling is identical for both.
+// Renders caption segments as one timestamped sentence per entry, blank-line
+// separated:
+//   [12:04] We can now define the derivative as a limit.
+//
+//   [12:09] Consider what happens as h approaches zero.
+// — the same [m:ss] marker shape the Velma job writes for uploaded media,
+// so guide citation handling is identical, but dense enough that citation
+// links can jump to the exact sentence in the video. A sentence is stamped
+// with the offset of the caption segment it starts in.
 export function formatCaptionTranscript(segments: CaptionSegment[]): string {
   const usable = segments
     .map((s) => ({ offset: s.offset, text: decodeEntities(s.text ?? '').trim() }))
     .filter((s) => s.text !== '' && !SOUND_TAG_RE.test(s.text) && Number.isFinite(s.offset))
     .sort((a, b) => a.offset - b.offset);
 
-  const paragraphs: { start: number; texts: string[] }[] = [];
-  let current: { start: number; texts: string[] } | null = null;
-  for (const segment of usable) {
-    if (!current || segment.offset - current.start >= PARAGRAPH_MAX_SECONDS) {
-      current = { start: segment.offset, texts: [] };
-      paragraphs.push(current);
-    }
-    current.texts.push(segment.text);
-  }
+  const lines: string[] = [];
+  let pending: string[] = [];
+  let start = 0;
+  const flush = () => {
+    if (pending.length === 0) return;
+    lines.push(`[${formatTimestamp(start)}] ${pending.join(' ')}`);
+    pending = [];
+  };
 
-  return paragraphs
-    .map((p) => `[${formatTimestamp(p.start)}] ${p.texts.join(' ')}`)
-    .join('\n\n');
+  for (const segment of usable) {
+    if (pending.length > 0 && segment.offset - start >= SENTENCE_MAX_SECONDS) flush();
+    for (const piece of segment.text.split(SENTENCE_SPLIT_RE)) {
+      if (piece === '') continue;
+      if (pending.length === 0) start = segment.offset;
+      pending.push(piece);
+      if (SENTENCE_END_RE.test(piece)) flush();
+    }
+  }
+  flush();
+
+  return lines.join('\n\n');
 }
 
 // YouTube's public Innertube web API key — shipped in every watch page

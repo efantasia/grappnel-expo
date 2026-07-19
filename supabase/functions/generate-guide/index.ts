@@ -25,7 +25,7 @@ Requirements:
 - Include a "Key Terms" section defining important vocabulary.
 - Include a "Self-Check Questions" section with 5-8 questions (answers in a separate "Answers" section at the end).
 - Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label.
-- Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
+- Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of sentences or paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
 - Outside of citations, never reproduce the bracketed timestamp markers in the guide text.
 - If the excerpts only partially cover the topic, cover what they contain and add a short "Gaps to Review" note listing what the student should look up in their materials.
 - Do not invent facts that are not supported by the excerpts.`;

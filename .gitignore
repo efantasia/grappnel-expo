@@ -9,6 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Firebase Hosting (deploy cache; firebase.json + .firebaserc ARE committed)
+.firebase/
+
 # Native
 .kotlin/
 *.orig.*

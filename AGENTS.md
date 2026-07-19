@@ -48,9 +48,10 @@ before writing Expo-API code.
   `check-material` watches for those objects and imports the transcript
   (`transcript_object` on the row) as `text/plain`. Re-deploy the job after
   changing it — `npx supabase functions deploy` does NOT cover it.
-- Transcripts are timestamped paragraphs (`[12:04] Speaker 1: …` from Velma's
-  utterances for uploads; `[12:04] …` from YouTube captions), so retrieved
-  chunks carry timestamps. `generate-guide` has Gemini cite
+- Transcripts are timestamped: paragraphs for uploads (`[12:04] Speaker 1: …`
+  from Velma's utterances), one sentence per line for YouTube captions
+  (`[12:04] …`, falling back to time-based breaks when the caption track has
+  no punctuation), so retrieved chunks carry timestamps. `generate-guide` has Gemini cite
   `[Source: <name> @ 12:04]` and then linkifies citations itself for
   materials with a `source_url` (appending `&t=<seconds>s`) — never let the
   model construct URLs.

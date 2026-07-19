@@ -1,0 +1,40 @@
+name: Deploy web (Firebase Hosting)
+
+# Builds the Expo web export and publishes it to the live channel at
+# https://grappnel.web.app on every push to main. CI checkouts have no
+# .env.local, so the localhost-Supabase build gotcha that affects local
+# deploys does not apply here — the EXPO_PUBLIC_* values come from repo
+# secrets. Backend-only commits are skipped via paths-ignore.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'supabase/**'
+      - 'gcp/**'
+      - 'scripts/**'
+      - '**.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GRAPPNEL }}
+          projectId: grappnel
+          channelId: live
