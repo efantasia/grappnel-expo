@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { TextField } from '@/components/ui/text-field';
 import { Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
@@ -48,7 +48,10 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <ScreenHeader title="Profile" />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.content]}
+      >
         <View
           style={[
             styles.card,

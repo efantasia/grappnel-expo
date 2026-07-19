@@ -140,6 +140,14 @@ before writing Expo-API code.
   is a no-op on web — don't use it).
 - Auth gating lives in `src/app/_layout.tsx` (segment check + `router.replace`),
   not in route groups.
+- `Screen` spans the full window width (it no longer caps content) so scroll
+  containers own full-width scrolling — on web the wheel then works across the
+  whole window, not just the centered column. Each scrollable screen applies
+  `screenScroll` from `src/components/ui/screen.tsx` (`style={screenScroll.scroll}`
+  for the full-width scroll node + `contentContainerStyle={[screenScroll.content,
+  …]}` to cap+center content to `MaxContentWidth`). `ScreenHeader` self-caps the
+  same way; non-scroll content in a `Screen` (e.g. `welcome`) must cap itself
+  (`width:'100%'` + `maxWidth: MaxContentWidth` + `alignSelf:'center'` + gutter).
 
 ## Gotchas
 

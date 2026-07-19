@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { TextField } from '@/components/ui/text-field';
-import { Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 
@@ -54,7 +54,11 @@ export default function SignupScreen() {
   return (
     <Screen>
       <ScreenHeader title="Create account" showBack />
-      <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.form]}
+        keyboardShouldPersistTaps="handled"
+      >
         <TextField
           label="Name"
           value={name}
@@ -110,6 +114,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   confirm: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
     gap: Spacing.three,
     paddingTop: Spacing.four,
   },

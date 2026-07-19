@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 
+import { screenScroll } from '@/components/ui/screen';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { parseGuide, prepareBody } from '@/lib/guide-markdown';
@@ -101,7 +102,11 @@ export function GuideContent({ content, meta }: GuideContentProps) {
   );
 
   return (
-    <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
+    <ScrollView
+      ref={scrollRef}
+      style={screenScroll.scroll}
+      contentContainerStyle={[screenScroll.content, styles.content]}
+    >
       {meta ? (
         <Text style={[styles.meta, { color: colors.textTertiary }]}>{meta}</Text>
       ) : null}

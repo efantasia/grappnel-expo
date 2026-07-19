@@ -13,7 +13,7 @@ import { GuideRow } from '@/components/guide-row';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { Spacing } from '@/constants/theme';
 import { useInterval } from '@/hooks/use-interval';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -87,7 +87,8 @@ export default function GuidesScreen() {
             message="Pick a topic and Grappnel will build a guide from your uploaded materials."
           />
         }
-        contentContainerStyle={styles.listContent}
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.listContent]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }

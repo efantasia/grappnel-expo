@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { OptionsModal } from '@/components/ui/options-modal';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { TextField } from '@/components/ui/text-field';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -136,7 +136,11 @@ export default function GenerateScreen() {
   return (
     <Screen>
       <ScreenHeader title="New study guide" showBack />
-      <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.form]}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={[styles.help, { color: colors.textSecondary }]}>
           Tell Grappnel what to cover and which sources to use. The guide is
           built only from your uploaded materials.

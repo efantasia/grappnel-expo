@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
 
 import { Button } from '@/components/ui/button';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { TextField } from '@/components/ui/text-field';
 import { Spacing } from '@/constants/theme';
@@ -45,7 +45,11 @@ export default function ResetPasswordScreen() {
   return (
     <Screen>
       <ScreenHeader title="Reset password" showBack />
-      <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.form]}
+        keyboardShouldPersistTaps="handled"
+      >
         {step === 'email' ? (
           <>
             <Text style={[styles.help, { color: colors.textSecondary }]}>

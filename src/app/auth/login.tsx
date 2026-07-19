@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { TextField } from '@/components/ui/text-field';
 import { Spacing } from '@/constants/theme';
@@ -30,7 +30,11 @@ export default function LoginScreen() {
   return (
     <Screen>
       <ScreenHeader title="Sign in" showBack />
-      <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.form]}
+        keyboardShouldPersistTaps="handled"
+      >
         <TextField
           label="Email"
           value={email}

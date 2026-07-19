@@ -16,7 +16,7 @@ import { MaterialRow } from '@/components/material-row';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIndexingPoll } from '@/hooks/use-indexing-poll';
@@ -149,7 +149,8 @@ export default function FolderScreen() {
             message="Upload this course's textbook chapters, lecture notes, or slides — or add a YouTube lecture — to this folder."
           />
         }
-        contentContainerStyle={styles.listContent}
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.listContent]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }

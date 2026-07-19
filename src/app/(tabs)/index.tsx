@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { OptionsModal } from '@/components/ui/options-modal';
 import { PromptModal } from '@/components/ui/prompt-modal';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIndexingPoll } from '@/hooks/use-indexing-poll';
@@ -226,7 +226,8 @@ export default function LibraryScreen() {
             />
           ) : null
         }
-        contentContainerStyle={styles.listContent}
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.listContent]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }

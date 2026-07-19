@@ -7,7 +7,7 @@ import { MaterialActions } from '@/components/material-actions';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { listFolders } from '@/lib/services/folders';
@@ -68,7 +68,10 @@ export default function TopicDetailScreen() {
   return (
     <Screen>
       <ScreenHeader title={topic.name} showBack />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.content]}
+      >
         <Button
           title="Build a study guide on this topic"
           onPress={() =>

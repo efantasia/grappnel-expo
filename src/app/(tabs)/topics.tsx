@@ -12,7 +12,7 @@ import {
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { Screen } from '@/components/ui/screen';
+import { Screen, screenScroll } from '@/components/ui/screen';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import {
@@ -112,7 +112,8 @@ export default function TopicsScreen() {
         }
         SectionSeparatorComponent={() => <View style={styles.gap} />}
         ItemSeparatorComponent={() => <View style={styles.gap} />}
-        contentContainerStyle={styles.listContent}
+        style={screenScroll.scroll}
+        contentContainerStyle={[screenScroll.content, styles.listContent]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
