@@ -58,9 +58,20 @@ before writing Expo-API code.
   from Velma's utterances), one sentence per line for YouTube captions
   (`[12:04] …`, falling back to time-based breaks when the caption track has
   no punctuation), so retrieved chunks carry timestamps. `generate-guide` has Gemini cite
-  `[Source: <name> @ 12:04]` and then linkifies citations itself for
-  materials with a `source_url` (appending `&t=<seconds>s`) — never let the
-  model construct URLs.
+  `[Source: <name> @ 12:04]` inline, then `footnoteCitations` rewrites each
+  distinct citation to a numbered footnote reference (`[^n]`) and appends the
+  definitions under a `### Sources` heading; for materials with a `source_url`
+  the definition is a Markdown link to that moment (appending `&t=<seconds>s`)
+  — never let the model construct URLs. The client (`src/components/guide-content.tsx`
+  + `src/lib/guide-markdown.ts`) renders the references as tappable superscripts
+  (`#fn-<n>`, intercepted to scroll to the footnote), the definitions as a
+  linked footnote list, converts `$…$`/`$$…$$` LaTeX (and stray LaTeX symbol
+  commands the model leaks outside the delimiters) to Unicode, and drops a
+  redundant leading title heading. Raw `<br>` is handled by a custom markdown-it
+  inline rule that emits a `hardbreak` token — a real line break that survives
+  inside table cells (whose source row must stay on one line), unlike a
+  string-level newline which would shatter the table. The generation prompt
+  forbids raw HTML and a redundant title heading.
 - YouTube materials (`source_type = 'youtube'`, `mime_type = 'video/youtube'`,
   NULL `storage_path`) are created by `add-youtube-material` (link → video id
   → oEmbed title). Their transcript is the video's own caption track
@@ -108,8 +119,9 @@ before writing Expo-API code.
   OpenAlex hierarchy, the official description + keywords, a link to the
   canonical Wikipedia article, and covering sources (each with the shared
   material "…" menu — open/download/rename/move/delete), and deep-links into
-  `/generate?topic=…` (passing the display name). The generate screen also
-  offers the deduped topic names as inline one-tap chips.
+  `/generate?topic=…` (passing the display name). The generate screen offers
+  the same subfield-grouped topics (`aggregateTopics` + `groupTopics`, scoped
+  to the selected source folder) as one-tap chips under per-subfield headers.
 - Renaming/moving a material must re-sync the search index metadata
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row

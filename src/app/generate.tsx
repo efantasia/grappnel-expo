@@ -18,10 +18,13 @@ import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { listFolders } from '@/lib/services/folders';
 import { generateGuide } from '@/lib/services/guides';
-import { listTopics, toTopicSuggestions, TopicSuggestion } from '@/lib/services/topics';
+import {
+  aggregateTopics,
+  groupTopics,
+  listTopics,
+  TopicGroup,
+} from '@/lib/services/topics';
 import { Folder } from '@/lib/types';
-
-const MAX_TOPIC_SUGGESTIONS = 12;
 
 export default function GenerateScreen() {
   const colors = useThemeColors();
@@ -37,7 +40,7 @@ export default function GenerateScreen() {
   );
   const [customTopic, setCustomTopic] = useState('');
   const [title, setTitle] = useState('');
-  const [suggestions, setSuggestions] = useState<TopicSuggestion[]>([]);
+  const [topicGroups, setTopicGroups] = useState<TopicGroup[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -48,14 +51,17 @@ export default function GenerateScreen() {
     );
   };
 
-  // Chips shown: the folder's suggestions, plus any selected topic that isn't
-  // in that list (e.g. one deep-linked in from the topic detail screen) so it
-  // still renders as selected.
-  const topicChips = useMemo(() => {
-    const names = suggestions.slice(0, MAX_TOPIC_SUGGESTIONS).map((s) => s.name);
-    const extras = selectedTopics.filter((t) => !names.includes(t));
-    return [...names, ...extras];
-  }, [suggestions, selectedTopics]);
+  // Any selected topic that isn't in the grouped suggestions (e.g. one
+  // deep-linked in from the topic detail screen) still renders as a selected
+  // chip, above the groups.
+  const extraTopics = useMemo(() => {
+    const names = new Set(
+      topicGroups.flatMap((group) => group.topics.map((topic) => topic.name)),
+    );
+    return selectedTopics.filter((t) => !names.has(t));
+  }, [topicGroups, selectedTopics]);
+
+  const hasTopicChips = topicGroups.length > 0 || extraTopics.length > 0;
 
   const topics = useMemo(() => {
     const custom = customTopic.trim();
@@ -71,12 +77,13 @@ export default function GenerateScreen() {
   );
 
   // Topics Gemini extracted from the selected sources, offered as one-tap
-  // starting points for the guide topic.
+  // starting points for the guide topic — grouped by OpenAlex subfield the
+  // same way the Explore tab is.
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       listTopics(folderId).then(({ data }) => {
-        if (!cancelled) setSuggestions(toTopicSuggestions(data ?? []));
+        if (!cancelled) setTopicGroups(groupTopics(aggregateTopics(data ?? [])));
       });
       return () => {
         cancelled = true;
@@ -104,6 +111,28 @@ export default function GenerateScreen() {
     ? (folders.find((f) => f.id === folderId)?.name ?? 'Folder')
     : 'All my materials';
 
+  const renderChip = (name: string, key: string) => {
+    const selected = selectedTopics.includes(name);
+    return (
+      <Pressable
+        key={key}
+        onPress={() => toggleTopic(name)}
+        style={[
+          styles.chip,
+          {
+            backgroundColor: selected ? colors.primarySoft : colors.surface,
+            borderColor: selected ? colors.primary : colors.border,
+          },
+        ]}
+      >
+        {selected ? <Check size={14} color={colors.primary} /> : null}
+        <Text style={{ color: selected ? colors.primary : colors.text, fontSize: 14 }}>
+          {name}
+        </Text>
+      </Pressable>
+    );
+  };
+
   return (
     <Screen>
       <ScreenHeader title="New study guide" showBack />
@@ -112,7 +141,7 @@ export default function GenerateScreen() {
           Tell Grappnel what to cover and which sources to use. The guide is
           built only from your uploaded materials.
         </Text>
-        {topicChips.length > 0 ? (
+        {hasTopicChips ? (
           <>
             <Text style={[styles.label, { color: colors.textSecondary }]}>
               Topics found in your materials
@@ -120,33 +149,32 @@ export default function GenerateScreen() {
             <Text style={[styles.hint, { color: colors.textTertiary }]}>
               Tap to add one or more to your guide.
             </Text>
-            <View style={styles.chips}>
-              {topicChips.map((name) => {
-                const selected = selectedTopics.includes(name);
-                return (
-                  <Pressable
-                    key={name}
-                    onPress={() => toggleTopic(name)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: selected ? colors.primarySoft : colors.surface,
-                        borderColor: selected ? colors.primary : colors.border,
-                      },
-                    ]}
-                  >
-                    {selected ? <Check size={14} color={colors.primary} /> : null}
-                    <Text style={{ color: selected ? colors.primary : colors.text, fontSize: 14 }}>
-                      {name}
+            {extraTopics.length > 0 ? (
+              <View style={styles.chips}>
+                {extraTopics.map((name) => renderChip(name, `extra::${name}`))}
+              </View>
+            ) : null}
+            {topicGroups.map((group) => (
+              <View key={group.key} style={styles.topicGroup}>
+                <View>
+                  <Text style={[styles.groupTitle, { color: colors.text }]}>
+                    {group.label}
+                  </Text>
+                  {group.sublabel ? (
+                    <Text style={[styles.groupSub, { color: colors.textTertiary }]}>
+                      {group.sublabel}
                     </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+                  ) : null}
+                </View>
+                <View style={styles.chips}>
+                  {group.topics.map((topic) => renderChip(topic.name, topic.key))}
+                </View>
+              </View>
+            ))}
           </>
         ) : null}
         <TextField
-          label={topicChips.length > 0 ? 'Add another topic (optional)' : 'Topic'}
+          label={hasTopicChips ? 'Add another topic (optional)' : 'Topic'}
           value={customTopic}
           onChangeText={setCustomTopic}
           placeholder="e.g. Photosynthesis light reactions, Chapters 4-6, Midterm 2 review"
@@ -230,6 +258,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
+  },
+  topicGroup: {
+    gap: Spacing.two,
+  },
+  groupTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  groupSub: {
+    fontSize: 12,
+    marginTop: 2,
   },
   chip: {
     flexDirection: 'row',

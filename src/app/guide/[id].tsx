@@ -4,18 +4,17 @@ import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import Markdown from 'react-native-markdown-display';
 
+import { GuideContent } from '@/components/guide-content';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Screen } from '@/components/ui/screen';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { Fonts, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useInterval } from '@/hooks/use-interval';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { deleteGuide, getGuide } from '@/lib/services/guides';
@@ -55,35 +54,13 @@ export default function GuideScreen() {
     router.back();
   };
 
-  const markdownStyles = {
-    body: { color: colors.text, fontSize: 15, lineHeight: 23 },
-    heading1: { color: colors.text, fontWeight: '700' as const, marginTop: Spacing.four },
-    heading2: { color: colors.text, fontWeight: '700' as const, marginTop: Spacing.four },
-    heading3: { color: colors.text, fontWeight: '600' as const, marginTop: Spacing.three },
-    strong: { color: colors.text, fontWeight: '700' as const },
-    bullet_list: { marginVertical: Spacing.two },
-    blockquote: {
-      backgroundColor: colors.surfaceAlt,
-      borderLeftColor: colors.primary,
-      borderLeftWidth: 3,
-      paddingHorizontal: Spacing.three,
-    },
-    code_inline: {
-      backgroundColor: colors.surfaceAlt,
-      color: colors.text,
-      fontFamily: Fonts?.mono,
-    },
-    fence: {
-      backgroundColor: colors.surfaceAlt,
-      borderColor: colors.border,
-      color: colors.text,
-      fontFamily: Fonts?.mono,
-    },
-    table: { borderColor: colors.border },
-    th: { color: colors.text },
-    tr: { borderColor: colors.border },
-    hr: { backgroundColor: colors.border },
-  };
+  const meta = guide?.topic
+    ? `Topic: ${guide.topic}${
+        guide.source_count
+          ? ` · built from ${guide.source_count} source${guide.source_count === 1 ? '' : 's'}`
+          : ''
+      }`
+    : undefined;
 
   return (
     <Screen>
@@ -118,17 +95,7 @@ export default function GuideScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.meta}>
-            <Text style={[styles.topic, { color: colors.textTertiary }]}>
-              Topic: {guide.topic}
-              {guide.source_count
-                ? ` · built from ${guide.source_count} source${guide.source_count === 1 ? '' : 's'}`
-                : ''}
-            </Text>
-          </View>
-          <Markdown style={markdownStyles}>{guide.content ?? ''}</Markdown>
-        </ScrollView>
+        <GuideContent content={guide.content ?? ''} meta={meta} />
       )}
 
       <ConfirmModal
@@ -158,14 +125,5 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
     maxWidth: 340,
-  },
-  content: {
-    paddingBottom: Spacing.six,
-  },
-  meta: {
-    marginBottom: Spacing.two,
-  },
-  topic: {
-    fontSize: 13,
   },
 });

@@ -20,12 +20,14 @@ const SYSTEM_PROMPT = `You are Grappnel, an expert study assistant that builds s
 You will receive one or more topics and numbered excerpts retrieved from the student's uploaded materials (textbooks, lecture notes, slides). Write a comprehensive study guide in Markdown based ONLY on those excerpts.
 
 Requirements:
-- Start with a one-paragraph overview of the topic(s).
+- Write in GitHub-Flavored Markdown. Do NOT emit raw HTML — no <br>, <b>, <sup> or any other tags. Separate paragraphs with a blank line and use Markdown for every bit of formatting.
+- Do NOT begin with a top-level title heading that restates the topic — the app already shows the guide's title. Start directly with a one-paragraph overview of the topic(s).
 - When several topics are given, cover each of them, organizing the body so every topic is addressed (a dedicated section per topic works well when they are distinct).
 - Organize the body into clear sections with ## headings; use bullet points, tables, and **bold key terms** where helpful.
+- Write any mathematical expression, formula, symbol, or unit as LaTeX: inline math delimited by single dollar signs ($...$) and display math by double dollar signs ($$...$$). For example: $\\text{GFR} < 60 \\text{ mL/min/1.73m}^2$. Never write LaTeX outside of these delimiters, and never wrap non-mathematical prose in dollar signs.
 - Include a "Key Terms" section defining important vocabulary.
 - Include a "Self-Check Questions" section with 5-8 questions (answers in a separate "Answers" section at the end).
-- Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label.
+- Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label. Place the citation right after the fact it supports; do not add extra spaces before it.
 - Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of sentences or paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
 - Outside of citations, never reproduce the bracketed timestamp markers in the guide text.
 - If the excerpts only partially cover the topic, cover what they contain and add a short "Gaps to Review" note listing what the student should look up in their materials.
@@ -110,30 +112,63 @@ function timestampToSeconds(ts: string): number | null {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-// Gemini cites plain "[Source: <name> @ 12:04]"; for sources that have a URL
-// (YouTube lectures) this rewrites the citation into a Markdown link that
-// jumps to that moment (…&t=724s). Done deterministically here rather than
-// trusting the model to construct URLs.
-function linkifyCitations(content: string, sources: Map<string, SourceInfo>): string {
+const CITATION_RE =
+  /\[Source:\s*([^\]@]+?)(?:\s*@\s*(\d{1,2}(?::\d{2}){1,2}))?\]/g;
+
+// Builds the timestamped watch URL for a source citation (…&t=724s), or the
+// plain URL when there is no timestamp. Returns null for sources without a URL.
+function citationHref(
+  url: string | undefined,
+  ts: string | undefined,
+): string | null {
+  if (!url) return null;
+  const seconds = ts ? timestampToSeconds(ts) : null;
+  return seconds !== null
+    ? `${url}${url.includes('?') ? '&' : '?'}t=${seconds}s`
+    : url;
+}
+
+// Gemini cites plain "[Source: <name> @ 12:04]" inline. Rewrites each distinct
+// citation to a numbered footnote reference `[^n]` and appends the definitions
+// under a "### Sources" heading (the client renders the references as tappable
+// superscripts and the list as linked footnotes). Sources with a URL (YouTube
+// lectures) get a Markdown link jumping to that moment; done deterministically
+// here rather than trusting the model to construct URLs. Any raw <br> the model
+// slips in is left as-is for the client to sanitize (it handles <br> inside
+// tables, which must stay on one line).
+function footnoteCitations(content: string, sources: Map<string, SourceInfo>): string {
   const urlByName = new Map<string, string>();
   for (const source of sources.values()) {
     if (source.url) urlByName.set(source.name, source.url);
   }
-  if (urlByName.size === 0) return content;
 
-  return content.replace(
-    /\[Source:\s*([^\]@]+?)(?:\s*@\s*(\d{1,2}(?::\d{2}){1,2}))?\]/g,
-    (citation, name: string, ts: string | undefined) => {
-      const url = urlByName.get(name.trim());
-      if (!url) return citation;
-      const seconds = ts ? timestampToSeconds(ts) : null;
-      const href =
-        seconds !== null
-          ? `${url}${url.includes('?') ? '&' : '?'}t=${seconds}s`
-          : url;
-      return `[${citation.slice(1, -1)}](${href})`;
+  const numberByKey = new Map<string, number>();
+  const order: { name: string; ts: string | undefined }[] = [];
+
+  const body = content.replace(
+    CITATION_RE,
+    (_match, rawName: string, ts: string | undefined) => {
+      const name = rawName.trim();
+      const key = ts ? `${name}@${ts}` : name;
+      let n = numberByKey.get(key);
+      if (n === undefined) {
+        n = order.length + 1;
+        numberByKey.set(key, n);
+        order.push({ name, ts });
+      }
+      return `[^${n}]`;
     },
   );
+
+  if (order.length === 0) return body;
+
+  const defs = order.map(({ name, ts }, i) => {
+    const label = ts ? `${name} @ ${ts}` : name;
+    const href = citationHref(urlByName.get(name), ts);
+    return `[^${i + 1}]: ${href ? `[${label}](${href})` : label}`;
+  });
+
+  return `${body.trimEnd()}\n\n### Sources\n\n${defs.join('\n')}\n`;
 }
 
 async function runGeneration(
@@ -174,7 +209,7 @@ async function runGeneration(
     await admin
       .from('study_guides')
       .update({
-        content: linkifyCitations(content, sources),
+        content: footnoteCitations(content, sources),
         status: 'complete',
         source_count: new Set(chunks.map((c) => c.materialId)).size,
         error_message: null,

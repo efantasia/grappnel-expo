@@ -33,31 +33,6 @@ export async function listTopics(
   return { data: data as TopicRow[] | null, error: error?.message ?? null };
 }
 
-export interface TopicSuggestion {
-  name: string;
-  materialCount: number;
-}
-
-// Collapses per-material topic rows into a deduped suggestion list keyed by
-// OpenAlex topic, most widely covered first (same topic across materials counts
-// once per material). The label is the OpenAlex topic's display name.
-export function toTopicSuggestions(topics: MaterialTopic[]): TopicSuggestion[] {
-  const byId = new Map<string, { name: string; materials: Set<string> }>();
-  for (const topic of topics) {
-    const id = topic.openalex_topic_id;
-    const name = topic.openalex_topic;
-    if (!id || !name) continue;
-    const entry = byId.get(id) ?? { name, materials: new Set<string>() };
-    entry.materials.add(topic.material_id);
-    byId.set(id, entry);
-  }
-  return [...byId.values()]
-    .map(({ name, materials }) => ({ name, materialCount: materials.size }))
-    .sort(
-      (a, b) => b.materialCount - a.materialCount || a.name.localeCompare(b.name),
-    );
-}
-
 // One OpenAlex topic collapsed across every material that covers it. `key` is
 // the OpenAlex topic id (stable, used for routing); `name` is the topic's
 // display name. Higher levels of the hierarchy are the most common non-null
