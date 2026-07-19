@@ -4,13 +4,14 @@
 
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
-import { deleteObject } from '../_shared/gcs.ts';
+import { deleteObject, listObjects } from '../_shared/gcs.ts';
 import { deleteDocument, metadataObjectName } from '../_shared/discovery.ts';
 import {
   isMediaMimeType,
   transcriptObjectName,
   transcriptErrorObjectName,
 } from '../_shared/transcribe.ts';
+import { figuresPrefix } from '../_shared/figures.ts';
 
 Deno.serve(async (req) => {
   const options = handleOptions(req);
@@ -46,6 +47,10 @@ Deno.serve(async (req) => {
       await deleteObject(transcriptObjectName(user.id, material.id));
       await deleteObject(transcriptErrorObjectName(user.id, material.id));
     }
+    // Extracted figures + manifest/error markers (material_figures rows cascade
+    // from the materials FK). Tolerates an empty prefix.
+    const figureObjects = await listObjects(figuresPrefix(user.id, material.id));
+    await Promise.all(figureObjects.map((name) => deleteObject(name)));
     // Only legacy rows (uploaded before direct-to-GCS) still have a
     // Supabase Storage file to clean up.
     if (material.storage_path) {

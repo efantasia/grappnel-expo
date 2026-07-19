@@ -7,6 +7,9 @@
 #   - a service account with least-privilege roles and a JSON key
 #   - the transcription Cloud Run job (gcp/transcribe-job: ffmpeg + Velma)
 #     with the Modulate API key in Secret Manager
+#   - the figure-extraction Cloud Run job (gcp/extract-figures-job: poppler +
+#     sharp + Vertex Gemini captions), which uses only the runtime service
+#     account (no external secret)
 #
 # Usage:
 #   VELMA_API_KEY=<modulate-console-admin-key> ./scripts/setup-gcp.sh <gcp-project-id> [prefix]
@@ -29,6 +32,9 @@ LOCATION="global"
 BUCKET_LOCATION="us"
 JOB_NAME="${PREFIX}-transcribe"
 JOB_REGION="us-central1"
+FIGURES_JOB_NAME="${PREFIX}-extract-figures"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
+GEMINI_LOCATION="${GEMINI_LOCATION:-global}"
 VELMA_SECRET="${PREFIX}-velma-api-key"
 KEY_FILE="secrets/${PREFIX}-sa.json"
 API="https://discoveryengine.googleapis.com/v1"
@@ -191,6 +197,28 @@ if gcloud secrets describe "${VELMA_SECRET}" --project "${PROJECT_ID}" >/dev/nul
     --member "serviceAccount:${SA_EMAIL}" --role roles/run.developer --quiet >/dev/null
 fi
 
+# The figure-extraction job needs no external secret (it uses the runtime SA for
+# both GCS and Vertex Gemini), so it deploys independently of the Velma key.
+echo "==> Granting Cloud Build permissions to the default compute service account"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member "serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role roles/cloudbuild.builds.builder --quiet >/dev/null
+
+echo "==> Deploying figure-extraction Cloud Run job ${FIGURES_JOB_NAME} (builds gcp/extract-figures-job)"
+gcloud run jobs deploy "${FIGURES_JOB_NAME}" \
+  --project "${PROJECT_ID}" \
+  --region "${JOB_REGION}" \
+  --source gcp/extract-figures-job \
+  --service-account "${SA_EMAIL}" \
+  --memory 2Gi --cpu 2 --task-timeout 3600 --max-retries 1 \
+  --set-env-vars "GCS_BUCKET=${BUCKET},GCP_PROJECT_ID=${PROJECT_ID},GEMINI_MODEL=${GEMINI_MODEL},GEMINI_LOCATION=${GEMINI_LOCATION}"
+
+echo "==> Allowing ${SA_NAME} to execute the figure job"
+gcloud run jobs add-iam-policy-binding "${FIGURES_JOB_NAME}" \
+  --project "${PROJECT_ID}" --region "${JOB_REGION}" \
+  --member "serviceAccount:${SA_EMAIL}" --role roles/run.developer --quiet >/dev/null
+
 echo "==> Creating service account key ${KEY_FILE}"
 mkdir -p secrets
 if [ -f "${KEY_FILE}" ]; then
@@ -211,7 +239,9 @@ Done. Now set the edge function secrets on your Supabase project:
     VERTEX_SEARCH_LOCATION=${LOCATION} \\
     VERTEX_SEARCH_DATASTORE_ID=${DATASTORE_ID} \\
     GCP_TRANSCRIBE_JOB=${JOB_NAME} \\
-    GCP_TRANSCRIBE_REGION=${JOB_REGION}
+    GCP_TRANSCRIBE_REGION=${JOB_REGION} \\
+    GCP_FIGURES_JOB=${FIGURES_JOB_NAME} \\
+    GCP_FIGURES_REGION=${JOB_REGION}
 
 For local development, put the same values in supabase/functions/.env
 (gitignored) before 'supabase functions serve'.

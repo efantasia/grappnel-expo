@@ -115,14 +115,15 @@ function attachmentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${rfc3986Encode(filename)}`;
 }
 
-// Mints a V4 signed download URL for an object, valid for `expiresSeconds`.
-// The bucket is private, so this is how clients fetch original files; signing
+// Mints a V4 signed GET URL for an object, valid for `expiresSeconds`. The
+// bucket is private, so this is how clients fetch objects directly; signing
 // happens locally with the service account key (no IAM signBlob round trip).
+// `extraQuery` carries any response-* overrides (disposition, content type).
 // Spec: https://cloud.google.com/storage/docs/authentication/signatures
-export async function createSignedDownloadUrl(
+async function buildSignedGetUrl(
   objectName: string,
-  filename: string,
-  expiresSeconds = 900,
+  extraQuery: [string, string][],
+  expiresSeconds: number,
 ): Promise<string> {
   const host = 'storage.googleapis.com';
   const sa = loadServiceAccount();
@@ -138,7 +139,7 @@ export async function createSignedDownloadUrl(
     ['X-Goog-Date', timestamp],
     ['X-Goog-Expires', String(expiresSeconds)],
     ['X-Goog-SignedHeaders', 'host'],
-    ['response-content-disposition', attachmentDisposition(filename)],
+    ...extraQuery,
   ]
     .map(([key, value]) => `${rfc3986Encode(key)}=${rfc3986Encode(value)}`)
     .sort()
@@ -161,6 +162,57 @@ export async function createSignedDownloadUrl(
   const stringToSign = ['GOOG4-RSA-SHA256', timestamp, scope, requestHash].join('\n');
   const signature = hex(await signRsaSha256(stringToSign));
   return `https://${host}${path}?${query}&X-Goog-Signature=${signature}`;
+}
+
+// Signed URL that downloads the object as an attachment under `filename`.
+export function createSignedDownloadUrl(
+  objectName: string,
+  filename: string,
+  expiresSeconds = 900,
+): Promise<string> {
+  return buildSignedGetUrl(
+    objectName,
+    [['response-content-disposition', attachmentDisposition(filename)]],
+    expiresSeconds,
+  );
+}
+
+// Signed URL for inline display (e.g. an <img>/expo-image src). Pins the
+// response content type so browsers render the figure instead of downloading it.
+export function createSignedInlineUrl(
+  objectName: string,
+  contentType: string,
+  expiresSeconds = 3600,
+): Promise<string> {
+  return buildSignedGetUrl(
+    objectName,
+    [
+      ['response-content-disposition', 'inline'],
+      ['response-content-type', contentType],
+    ],
+    expiresSeconds,
+  );
+}
+
+// Lists object names under a prefix (paginated). Used to clear a material's
+// figures before re-extracting.
+export async function listObjects(prefix: string): Promise<string[]> {
+  const token = await getGoogleAccessToken();
+  const names: string[] = [];
+  let pageToken = '';
+  do {
+    const url =
+      `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o?prefix=${encodeURIComponent(prefix)}&maxResults=1000` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) {
+      throw new Error(`GCS list failed for ${prefix} (${response.status}): ${await response.text()}`);
+    }
+    const data = await response.json();
+    for (const item of data.items ?? []) names.push(item.name as string);
+    pageToken = data.nextPageToken ?? '';
+  } while (pageToken);
+  return names;
 }
 
 export async function deleteObject(objectName: string): Promise<void> {

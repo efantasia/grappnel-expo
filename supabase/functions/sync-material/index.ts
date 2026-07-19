@@ -16,6 +16,7 @@ import {
   startTranscription,
   transcriptObjectName,
 } from '../_shared/transcribe.ts';
+import { isFigureBearingMimeType, startFigureExtraction } from '../_shared/figures.ts';
 import { fetchYouTubeTranscript, parseYouTubeVideoId } from '../_shared/youtube.ts';
 
 Deno.serve(async (req) => {
@@ -52,16 +53,29 @@ Deno.serve(async (req) => {
     return jsonResponse({ material });
   }
 
-  // Full syncs (re)ingest content, so queue a fresh topic extraction too;
-  // metadata-only re-syncs keep the already-extracted topics.
-  await admin
+  // Full syncs (re)ingest content, so queue a fresh topic + figure extraction
+  // too; metadata-only re-syncs keep the already-extracted topics and figures.
+  // Surface the error instead of swallowing it — otherwise a failed status
+  // update (e.g. a schema/deploy mismatch) silently strands the row at its
+  // previous status ('uploading') with no signal to the client.
+  const { error: syncingError } = await admin
     .from('materials')
     .update({
       status: 'syncing',
       error_message: null,
-      ...(body.metadata_only ? {} : { topics_status: 'pending', topics_error: null }),
+      ...(body.metadata_only
+        ? {}
+        : {
+            topics_status: 'pending',
+            topics_error: null,
+            figures_status: isFigureBearingMimeType(material.mime_type)
+              ? 'pending'
+              : 'skipped',
+            figures_error: null,
+          }),
     })
     .eq('id', material.id);
+  if (syncingError) throw new Error(syncingError.message);
 
   try {
     // YouTube full sync (also the retry path): re-fetch the caption
@@ -137,11 +151,37 @@ Deno.serve(async (req) => {
       gcsObject: isMedia ? material.transcript_object : gcsObject!,
     });
 
+    // In parallel with indexing, pull embedded figures out of document uploads
+    // (full syncs only). A failure to start must not fail the whole sync — the
+    // index import already succeeded — so it degrades figures_status instead.
+    let figuresStatus: string | undefined;
+    if (
+      !body.metadata_only &&
+      !isMedia &&
+      isFigureBearingMimeType(material.mime_type) &&
+      gcsObject
+    ) {
+      try {
+        await startFigureExtraction(user.id, material.id, gcsObject, material.mime_type);
+        figuresStatus = 'processing';
+      } catch (err) {
+        console.error(`figure extraction start failed for ${material.id}:`, err);
+        figuresStatus = 'error';
+      }
+    }
+
     const { data: updated } = await admin
       .from('materials')
       .update({
         index_operation: operationName,
         status: 'indexing',
+        ...(figuresStatus
+          ? {
+              figures_status: figuresStatus,
+              figures_error:
+                figuresStatus === 'error' ? 'Could not start figure extraction.' : null,
+            }
+          : {}),
       })
       .eq('id', material.id)
       .select()

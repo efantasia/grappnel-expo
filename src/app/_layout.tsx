@@ -45,6 +45,7 @@ function RootLayoutNav() {
       <Stack.Screen name="folder/[id]" />
       <Stack.Screen name="topic/[id]" />
       <Stack.Screen name="guide/[id]" />
+      <Stack.Screen name="deck/[id]" />
       <Stack.Screen name="generate" options={{ presentation: 'modal' }} />
     </Stack>
   );

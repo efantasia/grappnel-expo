@@ -78,6 +78,16 @@ export default function TopicDetailScreen() {
             router.push({ pathname: '/generate', params: { topic: topic.name } })
           }
         />
+        <Button
+          title="Make flashcards on this topic"
+          variant="secondary"
+          onPress={() =>
+            router.push({
+              pathname: '/generate',
+              params: { topic: topic.name, mode: 'flashcards' },
+            })
+          }
+        />
 
         <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
           Classification

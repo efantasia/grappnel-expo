@@ -16,7 +16,9 @@ before writing Expo-API code.
   deploy edge functions (Supabase)
 - `npm run deploy:transcribe` — deploy the transcription Cloud Run job
   (uses the `personal` gcloud config; run `gcloud auth login` if expired)
-- `npm run deploy:backend` — all three in order
+- `npm run deploy:figures` — deploy the figure-extraction Cloud Run job
+  (same `personal` gcloud config)
+- `npm run deploy:backend` — all four in order
 
 ## Architecture rules
 
@@ -126,6 +128,33 @@ before writing Expo-API code.
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row
   immediately and finishes via `EdgeRuntime.waitUntil`; clients poll the row.
+- **Figures** are extracted from document uploads (PDF/DOCX/PPTX/XLSX only —
+  never text, media, or YouTube) so cards/guides can show images from the
+  student's own sources. Parallel to indexing, `sync-material` starts the
+  `grappnel-extract-figures` Cloud Run job (`gcp/extract-figures-job/`: poppler
+  `pdfimages` / `unzip` media → `sharp` filter+normalize → Vertex Gemini
+  caption), which writes figures to `figures/<user_id>/<material_id>/…` plus a
+  `manifest.json` (or `error.txt`) there. `check-material` watches for the
+  manifest (`settleFigures` in `_shared/figures.ts`) and imports it into
+  `material_figures` (one row per kept figure, with the Gemini caption/alt
+  text). `materials.figures_status` tracks it: `pending → processing →
+  extracting → extracted | skipped | error` (`skipped` = a material type with
+  no embedded images). Full re-syncs reset it to `pending`; metadata-only
+  re-syncs keep the extracted figures. Re-deploy the job after changing it —
+  `npx supabase functions deploy` does NOT cover it (like transcribe). The
+  private bucket means figures are displayed via `sign-figures` (short-lived V4
+  signed inline URLs, `createSignedInlineUrl` in `_shared/gcs.ts`).
+- **Flashcards** mirror guides: `generate-flashcards` retrieves chunks for the
+  topic(s), offers Gemini the `material_figures` of the matched sources, and has
+  it author cards — each optionally attaching a figure *by index* (resolved to a
+  real `figure_id` server-side, never model-authored) so the card shows an image.
+  It returns a `generating` deck immediately and finishes via
+  `EdgeRuntime.waitUntil`; `flashcard_decks` + `flashcards` rows, clients poll.
+  The generate screen (`src/app/generate.tsx`) is shared: `?mode=flashcards`
+  routes it to `generateFlashcards` + `/deck/[id]` (the study screen, which
+  renders card images via `expo-image` + signed URLs). Deck list lives on the
+  **Cards** tab (`src/app/(tabs)/flashcards.tsx`); detail is `src/app/deck/[id].tsx`
+  (singular route, like `guide/[id]`, so it never collides with the tab route).
 
 ## Client conventions (mirrors abstia-expo)
 

@@ -14,6 +14,7 @@ import { getImportOperation, importMaterialDocument } from '../_shared/discovery
 import { objectExists, readObjectText } from '../_shared/gcs.ts';
 import { transcriptObjectName, transcriptErrorObjectName } from '../_shared/transcribe.ts';
 import { extractMaterialTopics, TopicSourceMaterial } from '../_shared/topics.ts';
+import { settleFigures } from '../_shared/figures.ts';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
@@ -59,6 +60,11 @@ Deno.serve(async (req) => {
   if (fetchError || !material) return errorResponse('Material not found', 404);
 
   try {
+    // Figure extraction runs on the Cloud Run job in parallel with indexing, so
+    // settle it on every poll (no-op unless a job is in flight). Mutates
+    // material.figures_status so the responses below reflect the new state.
+    await settleFigures(admin, material);
+
     if (material.status === 'transcribing') {
       const transcriptObject = transcriptObjectName(user.id, material.id);
       if (await objectExists(transcriptObject)) {

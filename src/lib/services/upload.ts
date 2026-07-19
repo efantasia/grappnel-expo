@@ -172,13 +172,15 @@ async function uploadOne(
     return { fileName: asset.name, material: null, error: message };
   }
 
-  // Kick off transcription/indexing; if it fails the material stays visible
-  // with an error status and can be retried.
+  // Kick off transcription/indexing. If it fails, surface the error (the file
+  // is already uploaded, so the material stays visible and can be retried) —
+  // swallowing it here would leave the row stranded at 'uploading' with no
+  // signal to the user.
   const synced = await syncMaterial(data.material.id);
   return {
     fileName: asset.name,
     material: synced.data ?? data.material,
-    error: null,
+    error: synced.error,
   };
 }
 

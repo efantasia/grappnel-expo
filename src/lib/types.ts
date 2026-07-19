@@ -26,6 +26,14 @@ export type MaterialSourceType = 'upload' | 'youtube';
 
 export type TopicsStatus = 'pending' | 'extracting' | 'extracted' | 'error';
 
+export type FiguresStatus =
+  | 'pending'
+  | 'processing'
+  | 'extracting'
+  | 'extracted'
+  | 'skipped'
+  | 'error';
+
 export interface Material {
   id: string;
   user_id: string;
@@ -44,8 +52,28 @@ export interface Material {
   index_operation: string | null;
   topics_status: TopicsStatus;
   topics_error: string | null;
+  figures_status: FiguresStatus;
+  figures_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// One image extracted from a material's source file (PDF/Office). The bytes
+// live in the private GCS bucket; the client fetches display URLs via the
+// sign-figures edge function.
+export interface MaterialFigure {
+  id: string;
+  user_id: string;
+  material_id: string;
+  gcs_object: string;
+  ordinal: number;
+  page: number | null;
+  width: number | null;
+  height: number | null;
+  mime_type: string;
+  caption: string | null;
+  alt_text: string | null;
+  created_at: string;
 }
 
 // One main topic of a material: a single official OpenAlex topic the material
@@ -71,6 +99,42 @@ export interface MaterialTopic {
 }
 
 export type GuideStatus = 'generating' | 'complete' | 'error';
+
+// Reuses the guide lifecycle (generating -> complete | error).
+export type DeckStatus = GuideStatus;
+
+export interface FlashcardDeck {
+  id: string;
+  user_id: string;
+  folder_id: string | null;
+  title: string;
+  topic: string;
+  status: DeckStatus;
+  error_message: string | null;
+  card_count: number | null;
+  source_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A card in a deck. figure_id references the material_figures row shown with the
+// card (null for text-only cards); the joined figure carries display metadata.
+export interface Flashcard {
+  id: string;
+  deck_id: string;
+  user_id: string;
+  ordinal: number;
+  front: string;
+  back: string;
+  hint: string | null;
+  figure_id: string | null;
+  citation: string | null;
+  created_at: string;
+  material_figures: Pick<
+    MaterialFigure,
+    'id' | 'width' | 'height' | 'alt_text' | 'caption'
+  > | null;
+}
 
 export interface StudyGuide {
   id: string;

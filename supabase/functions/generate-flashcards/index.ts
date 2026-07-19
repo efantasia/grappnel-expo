@@ -1,0 +1,317 @@
+// Generates a flashcard deck: retrieves the most relevant chunks from the
+// user's indexed materials (scoped by user_id and optionally a folder or
+// explicit materials), offers Gemini the figures extracted from those same
+// materials, and asks it to write a deck of Q/A cards — some of which attach a
+// figure so the card can show an image from the student's own materials.
+//
+// Like generate-guide, the deck row is created immediately with status
+// 'generating' and the heavy work runs via EdgeRuntime.waitUntil; clients poll
+// the flashcard_decks row for completion.
+
+import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { adminClient, getRequestUser } from '../_shared/supabase.ts';
+import { searchChunks, RetrievedChunk } from '../_shared/discovery.ts';
+import { generateJson } from '../_shared/gemini.ts';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+const SYSTEM_PROMPT = `You are Grappnel, an expert study assistant that builds flashcards for students from their own course materials.
+
+You will receive one or more topics, numbered excerpts retrieved from the student's uploaded materials, and a numbered list of figures (images) extracted from those materials. Write a set of study flashcards based ONLY on those excerpts and figures.
+
+Requirements:
+- Produce 10 to 20 cards. Prefer fewer, high-quality cards over padding.
+- Each card has a "front" (a question or prompt) and a "back" (the answer/explanation). Keep the front focused on a single idea; keep the back concise but complete.
+- Write plain text. Do NOT use Markdown, HTML, or LaTeX delimiters. Write formulas and symbols in readable plain text (e.g. "GFR < 60 mL/min/1.73m^2").
+- "hint" is optional: a short nudge that helps recall without giving away the answer.
+- When a listed figure directly illustrates a card, set "figure_index" to that figure's number so the image is shown with the card. Use a figure only when it genuinely helps (e.g. "What does this diagram show?", "Label the structure indicated"). Do NOT attach a figure that is unrelated, and never invent a figure that is not in the list. Omit figure_index (or use -1) for text-only cards.
+- "source" is the name of the material the card's content came from, exactly as it appears in the excerpt label (e.g. "Cell Biology Ch 3"). Include it when a card draws on a specific source.
+- Cover the topic(s) broadly; when several topics are given, include cards for each.
+- Do not invent facts that are not supported by the excerpts or figures.`;
+
+const CARD_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    cards: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          front: { type: 'STRING' },
+          back: { type: 'STRING' },
+          hint: { type: 'STRING' },
+          figure_index: { type: 'INTEGER' }, // -1 (or omitted) => no figure
+          source: { type: 'STRING' },
+        },
+        required: ['front', 'back'],
+      },
+    },
+  },
+  required: ['cards'],
+};
+
+interface GeneratedCard {
+  front?: string;
+  back?: string;
+  hint?: string;
+  figure_index?: number;
+  source?: string;
+}
+
+interface SourceInfo {
+  name: string;
+}
+
+interface FigureOption {
+  id: string;
+  materialId: string;
+  caption: string | null;
+  altText: string | null;
+}
+
+const CHUNK_CAP = 20;
+const MAX_TOPICS = 8;
+const MAX_CARDS = 20;
+const MAX_FIGURES_OFFERED = 30;
+
+// Round-robin retrieval across topics (mirrors generate-guide) so every topic
+// gets balanced representation. Deduped by (material, chunk text).
+async function retrieveForTopics(
+  topics: string[],
+  scope: { userId: string; folderId: string | null; materialIds: string[] | undefined },
+): Promise<RetrievedChunk[]> {
+  const perTopic = Math.max(5, Math.ceil(CHUNK_CAP / topics.length));
+  const lists = await Promise.all(
+    topics.map((topic) => searchChunks(topic, scope, perTopic)),
+  );
+  const seen = new Set<string>();
+  const merged: RetrievedChunk[] = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < longest && merged.length < CHUNK_CAP; i++) {
+    for (const list of lists) {
+      if (merged.length >= CHUNK_CAP) break;
+      const chunk = list[i];
+      if (!chunk) continue;
+      const key = `${chunk.materialId}::${chunk.content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(chunk);
+    }
+  }
+  return merged;
+}
+
+// Source names from the materials table (Vertex titles can degrade to ids).
+async function sourcesByMaterial(
+  admin: SupabaseClient,
+  userId: string,
+  materialIds: string[],
+): Promise<Map<string, SourceInfo>> {
+  if (materialIds.length === 0) return new Map();
+  const { data } = await admin
+    .from('materials')
+    .select('id, file_name, title, source_type')
+    .in('id', materialIds)
+    .eq('user_id', userId);
+  return new Map(
+    (data ?? []).map((m) => [
+      m.id as string,
+      { name: (m.source_type === 'youtube' ? m.title : m.file_name) as string },
+    ]),
+  );
+}
+
+// Figures from the materials the retrieval matched — the relevance heuristic is
+// "figures from the sources this topic draws on".
+async function figuresForMaterials(
+  admin: SupabaseClient,
+  userId: string,
+  materialIds: string[],
+): Promise<FigureOption[]> {
+  if (materialIds.length === 0) return [];
+  const { data } = await admin
+    .from('material_figures')
+    .select('id, material_id, caption, alt_text, ordinal')
+    .in('material_id', materialIds)
+    .eq('user_id', userId)
+    .order('material_id', { ascending: true })
+    .order('ordinal', { ascending: true })
+    .limit(MAX_FIGURES_OFFERED);
+  return (data ?? []).map((f) => ({
+    id: f.id as string,
+    materialId: f.material_id as string,
+    caption: (f.caption as string | null) ?? null,
+    altText: (f.alt_text as string | null) ?? null,
+  }));
+}
+
+function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>): string {
+  return chunks
+    .map((chunk, i) => `[${i + 1}] ${sources.get(chunk.materialId)?.name ?? chunk.title}\n${chunk.content}`)
+    .join('\n\n---\n\n');
+}
+
+function buildFigureList(figures: FigureOption[], sources: Map<string, SourceInfo>): string {
+  if (figures.length === 0) return 'No figures are available for these sources.';
+  return figures
+    .map((fig, i) => {
+      const source = sources.get(fig.materialId)?.name ?? 'source';
+      const desc = fig.caption ?? fig.altText ?? 'figure (no description)';
+      return `[${i}] (Source: ${source}) ${desc}`;
+    })
+    .join('\n');
+}
+
+async function runGeneration(
+  deckId: string,
+  userId: string,
+  topics: string[],
+  folderId: string | null,
+  materialIds: string[] | undefined,
+): Promise<void> {
+  const admin = adminClient();
+  try {
+    const chunks = await retrieveForTopics(topics, { userId, folderId, materialIds });
+    if (chunks.length === 0) {
+      await admin
+        .from('flashcard_decks')
+        .update({
+          status: 'error',
+          error_message:
+            'No indexed material matched these topics. Make sure your sources have finished indexing, or try broader topics.',
+        })
+        .eq('id', deckId);
+      return;
+    }
+
+    const chunkMaterialIds = [...new Set(chunks.map((c) => c.materialId).filter(Boolean))];
+    const sources = await sourcesByMaterial(admin, userId, chunkMaterialIds);
+    const figures = await figuresForMaterials(admin, userId, chunkMaterialIds);
+
+    const topicLabel =
+      topics.length === 1
+        ? `Topic: ${topics[0]}`
+        : `Topics:\n${topics.map((t) => `- ${t}`).join('\n')}`;
+
+    const prompt = `${topicLabel}
+
+Excerpts from my materials:
+
+${buildContext(chunks, sources)}
+
+Figures available to attach (reference by the bracketed number in "figure_index"):
+${buildFigureList(figures, sources)}`;
+
+    const result = await generateJson<{ cards?: GeneratedCard[] }>(
+      SYSTEM_PROMPT,
+      prompt,
+      CARD_SCHEMA,
+    );
+
+    const cards = (result.cards ?? [])
+      .filter((c) => c.front?.trim() && c.back?.trim())
+      .slice(0, MAX_CARDS);
+    if (cards.length === 0) {
+      await admin
+        .from('flashcard_decks')
+        .update({ status: 'error', error_message: 'Could not build cards from these sources.' })
+        .eq('id', deckId);
+      return;
+    }
+
+    const rows = cards.map((card, i) => {
+      const idx = typeof card.figure_index === 'number' ? card.figure_index : -1;
+      const figure = idx >= 0 && idx < figures.length ? figures[idx] : null;
+      return {
+        deck_id: deckId,
+        user_id: userId,
+        ordinal: i,
+        front: card.front!.trim().slice(0, 4000),
+        back: card.back!.trim().slice(0, 4000),
+        hint: card.hint?.trim() ? card.hint.trim().slice(0, 1000) : null,
+        figure_id: figure?.id ?? null,
+        citation: card.source?.trim() ? card.source.trim().slice(0, 200) : null,
+      };
+    });
+
+    const { error: insertError } = await admin.from('flashcards').insert(rows);
+    if (insertError) throw new Error(insertError.message);
+
+    await admin
+      .from('flashcard_decks')
+      .update({
+        status: 'complete',
+        card_count: rows.length,
+        source_count: chunkMaterialIds.length,
+        error_message: null,
+      })
+      .eq('id', deckId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`generate-flashcards failed for ${deckId}:`, message);
+    await admin
+      .from('flashcard_decks')
+      .update({ status: 'error', error_message: message })
+      .eq('id', deckId);
+  }
+}
+
+Deno.serve(async (req) => {
+  const options = handleOptions(req);
+  if (options) return options;
+
+  const user = await getRequestUser(req);
+  if (!user) return errorResponse('Unauthorized', 401);
+
+  let body: {
+    topic?: string;
+    topics?: string[];
+    title?: string;
+    folder_id?: string | null;
+    material_ids?: string[];
+  };
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body');
+  }
+
+  const rawTopics = Array.isArray(body.topics) ? body.topics : [body.topic];
+  const topics = [
+    ...new Set(rawTopics.map((t) => t?.trim()).filter((t): t is string => !!t)),
+  ].slice(0, MAX_TOPICS);
+  if (topics.length === 0) return errorResponse('at least one topic is required');
+  const topicSummary = topics.join(', ');
+
+  const admin = adminClient();
+  const { data: deck, error: insertError } = await admin
+    .from('flashcard_decks')
+    .insert({
+      user_id: user.id,
+      folder_id: body.folder_id ?? null,
+      title: body.title?.trim() || topicSummary,
+      topic: topicSummary,
+      status: 'generating',
+    })
+    .select()
+    .single();
+  if (insertError || !deck) {
+    return errorResponse(insertError?.message ?? 'Could not create deck', 500);
+  }
+
+  const generation = runGeneration(
+    deck.id,
+    user.id,
+    topics,
+    body.folder_id ?? null,
+    body.material_ids,
+  );
+  if (typeof EdgeRuntime !== 'undefined') {
+    EdgeRuntime.waitUntil(generation);
+  } else {
+    await generation;
+  }
+
+  return jsonResponse({ deck });
+});

@@ -22,7 +22,8 @@
     "deploy:db": "npx supabase db push",
     "deploy:functions": "npx supabase functions deploy",
     "deploy:transcribe": "CLOUDSDK_CONFIG=$HOME/.config/gcloud-personal gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job --region us-central1 --project grappnel",
-    "deploy:backend": "npm run deploy:db && npm run deploy:functions && npm run deploy:transcribe"
+    "deploy:figures": "CLOUDSDK_CONFIG=$HOME/.config/gcloud-personal gcloud run jobs deploy grappnel-extract-figures --source gcp/extract-figures-job --region us-central1 --project grappnel",
+    "deploy:backend": "npm run deploy:db && npm run deploy:functions && npm run deploy:transcribe && npm run deploy:figures"
   },
   "dependencies": {
     "@expo/ui": "~57.0.3",

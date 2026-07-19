@@ -39,6 +39,13 @@ export const gcpConfig = {
   get transcribeRegion() {
     return Deno.env.get('GCP_TRANSCRIBE_REGION') ?? 'us-central1';
   },
+  // Cloud Run job that extracts + captions embedded images (document materials)
+  get figuresJob() {
+    return Deno.env.get('GCP_FIGURES_JOB') ?? 'grappnel-extract-figures';
+  },
+  get figuresRegion() {
+    return Deno.env.get('GCP_FIGURES_REGION') ?? 'us-central1';
+  },
 };
 
 // Discovery Engine REST base URL is location-aware. Some methods (e.g.

@@ -1,0 +1,9 @@
+{
+  "name": "grappnel-extract-figures-job",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run job: extract embedded images from a GCS document (PDF/Office), normalize + caption them with Vertex Gemini, write the figures and a manifest back to GCS.",
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

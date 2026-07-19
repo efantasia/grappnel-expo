@@ -17,6 +17,7 @@ import { TextField } from '@/components/ui/text-field';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { listFolders } from '@/lib/services/folders';
+import { generateFlashcards } from '@/lib/services/flashcards';
 import { generateGuide } from '@/lib/services/guides';
 import {
   aggregateTopics,
@@ -29,7 +30,8 @@ import { Folder } from '@/lib/types';
 export default function GenerateScreen() {
   const colors = useThemeColors();
   const router = useRouter();
-  const params = useLocalSearchParams<{ folderId?: string; topic?: string }>();
+  const params = useLocalSearchParams<{ folderId?: string; topic?: string; mode?: string }>();
+  const isDeck = params.mode === 'flashcards';
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<string | null>(params.folderId ?? null);
@@ -94,17 +96,16 @@ export default function GenerateScreen() {
   const handleGenerate = async () => {
     setError(null);
     setSubmitting(true);
-    const { data, error: generateError } = await generateGuide({
-      topics,
-      title: title.trim() || undefined,
-      folderId,
-    });
+    const input = { topics, title: title.trim() || undefined, folderId };
+    const { data, error: generateError } = isDeck
+      ? await generateFlashcards(input)
+      : await generateGuide(input);
     setSubmitting(false);
     if (generateError || !data) {
       setError(generateError ?? 'Could not start generation');
       return;
     }
-    router.replace(`/guide/${data.id}`);
+    router.replace(isDeck ? `/deck/${data.id}` : `/guide/${data.id}`);
   };
 
   const folderName = folderId
@@ -135,15 +136,16 @@ export default function GenerateScreen() {
 
   return (
     <Screen>
-      <ScreenHeader title="New study guide" showBack />
+      <ScreenHeader title={isDeck ? 'New flashcard deck' : 'New study guide'} showBack />
       <ScrollView
         style={screenScroll.scroll}
         contentContainerStyle={[screenScroll.content, styles.form]}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={[styles.help, { color: colors.textSecondary }]}>
-          Tell Grappnel what to cover and which sources to use. The guide is
-          built only from your uploaded materials.
+          {isDeck
+            ? 'Tell Grappnel what to cover and which sources to use. Cards are built only from your uploaded materials, with figures from your sources where they help.'
+            : 'Tell Grappnel what to cover and which sources to use. The guide is built only from your uploaded materials.'}
         </Text>
         {hasTopicChips ? (
           <>
@@ -205,7 +207,7 @@ export default function GenerateScreen() {
         </Pressable>
         {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
         <Button
-          title="Generate study guide"
+          title={isDeck ? 'Generate flashcards' : 'Generate study guide'}
           onPress={handleGenerate}
           loading={submitting}
           disabled={topics.length === 0}
