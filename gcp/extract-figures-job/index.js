@@ -270,7 +270,11 @@ async function captionFigure(endpoint, buffer, mimeType) {
         ],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 512,
+          // Generous ceiling: thinking-capable Flash models spend output tokens
+          // on internal reasoning first, so a tight cap truncates the JSON
+          // mid-string (the caption never completes). The actual caption is
+          // tiny, so a high cap costs nothing extra but avoids truncation.
+          maxOutputTokens: 4096,
           responseMimeType: 'application/json',
           responseSchema: CAPTION_SCHEMA,
         },
@@ -280,9 +284,12 @@ async function captionFigure(endpoint, buffer, mimeType) {
       throw new Error(`Gemini caption failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
     }
     const data = await response.json();
-    const text = (data.candidates?.[0]?.content?.parts ?? [])
-      .map((p) => p.text ?? '')
-      .join('');
+    const candidate = data.candidates?.[0];
+    const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? '').join('');
+    // Surface truncation clearly instead of as a downstream "unterminated JSON".
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      throw new Error(`caption response incomplete (finishReason=${candidate.finishReason})`);
+    }
     const parsed = JSON.parse(text);
     return {
       meaningful: parsed.meaningful !== false,

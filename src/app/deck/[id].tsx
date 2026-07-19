@@ -1,15 +1,24 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react-native';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Lightbulb,
+  Maximize2,
+  Trash2,
+  X,
+} from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
@@ -30,6 +39,7 @@ import { Flashcard, FlashcardDeck } from '@/lib/types';
 export default function DeckScreen() {
   const colors = useThemeColors();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [deck, setDeck] = useState<FlashcardDeck | null>(null);
@@ -37,6 +47,8 @@ export default function DeckScreen() {
   const [figureUrls, setFigureUrls] = useState<Record<string, string>>({});
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [showHints, setShowHints] = useState(true);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -83,6 +95,8 @@ export default function DeckScreen() {
   };
 
   const card = cards[index];
+  const figureUri = card?.figure_id ? figureUrls[card.figure_id] : undefined;
+  const hasHints = cards.some((c) => !!c.hint);
 
   return (
     <Screen>
@@ -91,9 +105,23 @@ export default function DeckScreen() {
         showBack
         right={
           deck ? (
-            <Pressable onPress={() => setConfirmDelete(true)} hitSlop={8}>
-              <Trash2 size={22} color={colors.danger} />
-            </Pressable>
+            <>
+              {hasHints ? (
+                <Pressable
+                  onPress={() => setShowHints((s) => !s)}
+                  hitSlop={8}
+                  accessibilityLabel={showHints ? 'Hide hints' : 'Show hints'}
+                >
+                  <Lightbulb
+                    size={22}
+                    color={showHints ? colors.primary : colors.textTertiary}
+                  />
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => setConfirmDelete(true)} hitSlop={8}>
+                <Trash2 size={22} color={colors.danger} />
+              </Pressable>
+            </>
           ) : null
         }
       />
@@ -136,20 +164,33 @@ export default function DeckScreen() {
             onPress={() => setRevealed((r) => !r)}
             style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
-            {card.figure_id && figureUrls[card.figure_id] ? (
-              <Image
-                source={{ uri: figureUrls[card.figure_id] }}
-                style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
-                contentFit="contain"
-                transition={150}
-                accessibilityLabel={card.material_figures?.alt_text ?? undefined}
-              />
+            {figureUri ? (
+              <Pressable
+                style={styles.figureWrap}
+                // Don't let tapping the image flip the card — open it full-size.
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  setLightboxOpen(true);
+                }}
+                accessibilityLabel="View figure full size"
+              >
+                <Image
+                  source={{ uri: figureUri }}
+                  style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
+                  contentFit="contain"
+                  transition={150}
+                  accessibilityLabel={card.material_figures?.alt_text ?? undefined}
+                />
+                <View style={styles.expandBadge}>
+                  <Maximize2 size={15} color="#fff" />
+                </View>
+              </Pressable>
             ) : null}
 
             <Text style={[styles.side, { color: colors.textTertiary }]}>Question</Text>
             <Text style={[styles.front, { color: colors.text }]}>{card.front}</Text>
 
-            {card.hint && !revealed ? (
+            {card.hint && !revealed && showHints ? (
               <Text style={[styles.hint, { color: colors.textSecondary }]}>
                 Hint: {card.hint}
               </Text>
@@ -215,6 +256,33 @@ export default function DeckScreen() {
         onConfirm={handleDelete}
         onClose={() => setConfirmDelete(false)}
       />
+
+      {/* Full-size figure viewer: tap anywhere (or the ✕) to dismiss. */}
+      <Modal
+        visible={lightboxOpen && !!figureUri}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLightboxOpen(false)}
+      >
+        <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxOpen(false)}>
+          {figureUri ? (
+            <Image
+              source={{ uri: figureUri }}
+              style={styles.lightboxImage}
+              contentFit="contain"
+              accessibilityLabel={card?.material_figures?.alt_text ?? undefined}
+            />
+          ) : null}
+          <Pressable
+            style={[styles.lightboxClose, { top: insets.top + Spacing.two }]}
+            onPress={() => setLightboxOpen(false)}
+            hitSlop={12}
+            accessibilityLabel="Close"
+          >
+            <X size={28} color="#fff" />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }
@@ -250,11 +318,38 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     minHeight: 220,
   },
+  figureWrap: {
+    position: 'relative',
+    marginBottom: Spacing.two,
+  },
   figure: {
     width: '100%',
     height: 240,
     borderRadius: Radius.sm,
-    marginBottom: Spacing.two,
+  },
+  expandBadge: {
+    position: 'absolute',
+    top: Spacing.two,
+    right: Spacing.two,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    borderRadius: Radius.pill,
+    padding: 6,
+  },
+  lightboxBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.three,
+  },
+  lightboxImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lightboxClose: {
+    position: 'absolute',
+    right: Spacing.three,
+    padding: Spacing.two,
   },
   side: {
     fontSize: 12,
