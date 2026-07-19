@@ -5,6 +5,15 @@ import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { Radius } from '@/constants/theme';
 import { OcclusionBox } from '@/lib/types';
 
+// Detected label boxes can be slightly small or shifted, leaving part of the
+// label showing. Pad the mask so it reliably covers the whole label — a mix of
+// box-relative and image-relative padding, because the box error is often a
+// roughly fixed offset rather than proportional to the (small) label box.
+// Over-covering is safe; under-covering exposes the answer.
+const PAD_BOX = 0.25; // + this fraction of the box, each side
+const PAD_IMG_X = 0.03; // + this fraction of the image width, each side
+const PAD_IMG_Y = 0.02; // + this fraction of the image height, each side
+
 // Renders a figure with one or more label regions masked out (image-occlusion
 // cloze). Boxes are [x, y, w, h] fractions of the figure; we map them onto the
 // on-screen image using its intrinsic width/height and the measured container,
@@ -47,12 +56,20 @@ export function OccludedImage({
     const dispH = height * scale;
     const offX = (layout.w - dispW) / 2;
     const offY = (layout.h - dispH) / 2;
-    return boxes.map((b) => ({
-      left: offX + b[0] * dispW,
-      top: offY + b[1] * dispH,
-      width: b[2] * dispW,
-      height: b[3] * dispH,
-    }));
+    return boxes.map((b) => {
+      const padX = b[2] * PAD_BOX + PAD_IMG_X;
+      const padY = b[3] * PAD_BOX + PAD_IMG_Y;
+      const x = Math.max(0, b[0] - padX);
+      const y = Math.max(0, b[1] - padY);
+      const w = Math.min(1 - x, b[2] + 2 * padX);
+      const h = Math.min(1 - y, b[3] + 2 * padY);
+      return {
+        left: offX + x * dispW,
+        top: offY + y * dispH,
+        width: w * dispW,
+        height: h * dispH,
+      };
+    });
   }, [layout, width, height, boxes, contentFit]);
 
   // When not revealed we only show the image once masks can be placed, so the

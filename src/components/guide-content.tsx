@@ -17,7 +17,7 @@ import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 import { screenScroll } from '@/components/ui/screen';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
-import { extractFigureIds, parseGuide, prepareBody } from '@/lib/guide-markdown';
+import { extractFigureIds, parseGuide, prepareBody, splitFigures } from '@/lib/guide-markdown';
 import { signFigureUrls } from '@/lib/services/figures';
 
 // react-native-markdown-display's default markdown-it renders raw `<br>` as
@@ -76,40 +76,10 @@ export function GuideContent({ content, meta }: GuideContentProps) {
     };
   }, [figureIds]);
 
-  // Render embedded figures (![caption](grappnel-figure://<id>)) as images once
-  // their signed URL is available; tapping opens a full-size viewer.
-  const rules = useMemo(
-    () => ({
-      image: (node: any) => {
-        const src: string = node.attributes?.src ?? '';
-        const match = /^grappnel-figure:\/\/(.+)$/.exec(src);
-        if (!match) return null;
-        const url = figureUrls[match[1]];
-        if (!url) return null;
-        const caption = (node.attributes?.alt || node.content || '').toString().trim();
-        return (
-          <Pressable
-            key={node.key}
-            onPress={() => setLightbox({ url, caption })}
-            style={styles.figureWrap}
-            accessibilityLabel="View figure full size"
-          >
-            <Image
-              source={{ uri: url }}
-              style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
-              contentFit="contain"
-              transition={150}
-              accessibilityLabel={caption || undefined}
-            />
-            {caption ? (
-              <Text style={[styles.caption, { color: colors.textTertiary }]}>{caption}</Text>
-            ) : null}
-          </Pressable>
-        );
-      },
-    }),
-    [figureUrls, colors],
-  );
+  // Split the body into markdown runs and figure blocks so each figure renders
+  // as its own block (a View) — inline image rendering nests the caption in a
+  // paragraph's Text wrapper, where it can't wrap to the content width.
+  const segments = useMemo(() => splitFigures(body), [body]);
 
   // Footnote references are rewritten to `#fn-<n>` links; intercept those to
   // scroll instead of opening a URL, and let real (e.g. video) links open.
@@ -171,14 +141,43 @@ export function GuideContent({ content, meta }: GuideContentProps) {
         <Text style={[styles.meta, { color: colors.textTertiary }]}>{meta}</Text>
       ) : null}
 
-      <Markdown
-        style={markdownStyles}
-        markdownit={markdownIt}
-        rules={rules}
-        onLinkPress={handleLink}
-      >
-        {body}
-      </Markdown>
+      {segments.map((seg, i) => {
+        if (seg.type === 'figure') {
+          const url = figureUrls[seg.id];
+          if (!url) return null; // not signed yet
+          return (
+            <Pressable
+              key={`fig-${i}`}
+              onPress={() => setLightbox({ url, caption: seg.caption })}
+              style={styles.figureWrap}
+              accessibilityLabel="View figure full size"
+            >
+              <Image
+                source={{ uri: url }}
+                style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
+                contentFit="contain"
+                transition={150}
+                accessibilityLabel={seg.caption || undefined}
+              />
+              {seg.caption ? (
+                <Text style={[styles.caption, { color: colors.textTertiary }]}>
+                  {seg.caption}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        }
+        return (
+          <Markdown
+            key={`md-${i}`}
+            style={markdownStyles}
+            markdownit={markdownIt}
+            onLinkPress={handleLink}
+          >
+            {seg.text}
+          </Markdown>
+        );
+      })}
 
       {footnotes.length > 0 ? (
         <View

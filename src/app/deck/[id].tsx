@@ -1,13 +1,6 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Lightbulb,
-  Maximize2,
-  Trash2,
-  X,
-} from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Lightbulb, Maximize2, X } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,24 +15,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OccludedImage } from '@/components/occluded-image';
 import { Button } from '@/components/ui/button';
-import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Screen, screenScroll } from '@/components/ui/screen';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Radius, Spacing } from '@/constants/theme';
 import { useInterval } from '@/hooks/use-interval';
 import { useThemeColors } from '@/hooks/use-theme-colors';
-import {
-  deleteDeck,
-  getDeck,
-  listCards,
-  signFigureUrls,
-} from '@/lib/services/flashcards';
+import { getDeck, listCards, signFigureUrls } from '@/lib/services/flashcards';
 import { Flashcard, FlashcardDeck } from '@/lib/types';
 
 export default function DeckScreen() {
   const colors = useThemeColors();
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
 
@@ -48,10 +34,8 @@ export default function DeckScreen() {
   const [figureUrls, setFigureUrls] = useState<Record<string, string>>({});
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
-  const [showHints, setShowHints] = useState(true);
+  const [showHints, setShowHints] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -81,15 +65,6 @@ export default function DeckScreen() {
   // Poll while the deck is still generating in the background.
   useInterval(load, deck?.status === 'generating' ? 4000 : null);
 
-  const handleDelete = async () => {
-    if (!deck) return;
-    setDeleting(true);
-    await deleteDeck(deck.id);
-    setDeleting(false);
-    setConfirmDelete(false);
-    router.back();
-  };
-
   const goTo = (next: number) => {
     setIndex(next);
     setRevealed(false);
@@ -116,24 +91,17 @@ export default function DeckScreen() {
         title={deck?.title ?? 'Deck'}
         showBack
         right={
-          deck ? (
-            <>
-              {hasHints ? (
-                <Pressable
-                  onPress={() => setShowHints((s) => !s)}
-                  hitSlop={8}
-                  accessibilityLabel={showHints ? 'Hide hints' : 'Show hints'}
-                >
-                  <Lightbulb
-                    size={22}
-                    color={showHints ? colors.primary : colors.textTertiary}
-                  />
-                </Pressable>
-              ) : null}
-              <Pressable onPress={() => setConfirmDelete(true)} hitSlop={8}>
-                <Trash2 size={22} color={colors.danger} />
-              </Pressable>
-            </>
+          deck && hasHints ? (
+            <Pressable
+              onPress={() => setShowHints((s) => !s)}
+              hitSlop={8}
+              accessibilityLabel={showHints ? 'Hide hints' : 'Show hints'}
+            >
+              <Lightbulb
+                size={22}
+                color={showHints ? colors.primary : colors.textTertiary}
+              />
+            </Pressable>
           ) : null
         }
       />
@@ -287,17 +255,6 @@ export default function DeckScreen() {
           </View>
         </ScrollView>
       )}
-
-      <ConfirmModal
-        visible={confirmDelete}
-        title="Delete deck?"
-        message={`"${deck?.title}" will be permanently deleted.`}
-        confirmTitle="Delete"
-        destructive
-        loading={deleting}
-        onConfirm={handleDelete}
-        onClose={() => setConfirmDelete(false)}
-      />
 
       {/* Full-size figure viewer: tap anywhere (or the ✕) to dismiss. */}
       <Modal
