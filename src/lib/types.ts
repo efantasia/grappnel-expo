@@ -117,6 +117,10 @@ export interface FlashcardDeck {
   updated_at: string;
 }
 
+// 'basic' = question/answer; 'cloze' = fill-in-the-blank (front has a "_____"
+// gap, back is the missing term).
+export type CardType = 'basic' | 'cloze';
+
 // A card in a deck. figure_id references the material_figures row shown with the
 // card (null for text-only cards); the joined figure carries display metadata.
 export interface Flashcard {
@@ -124,6 +128,7 @@ export interface Flashcard {
   deck_id: string;
   user_id: string;
   ordinal: number;
+  type: CardType;
   front: string;
   back: string;
   hint: string | null;

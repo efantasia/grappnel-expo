@@ -140,7 +140,11 @@ export default function DeckScreen() {
         </View>
       ) : deck.status === 'error' ? (
         <View style={styles.center}>
-          <StatusBadge status="error" />
+          {/* Wrap so the badge's own alignSelf:'flex-start' doesn't pin it left
+              of the centered message. */}
+          <View>
+            <StatusBadge status="error" />
+          </View>
           <Text style={[styles.centerText, { color: colors.textSecondary }]}>
             {deck.error_message ?? 'Something went wrong generating this deck.'}
           </Text>
@@ -187,7 +191,9 @@ export default function DeckScreen() {
               </Pressable>
             ) : null}
 
-            <Text style={[styles.side, { color: colors.textTertiary }]}>Question</Text>
+            <Text style={[styles.side, { color: colors.textTertiary }]}>
+              {card.type === 'cloze' ? 'Fill in the blank' : 'Question'}
+            </Text>
             <Text style={[styles.front, { color: colors.text }]}>{card.front}</Text>
 
             {card.hint && !revealed && showHints ? (
@@ -199,7 +205,18 @@ export default function DeckScreen() {
             {revealed ? (
               <View style={[styles.answerBlock, { borderTopColor: colors.border }]}>
                 <Text style={[styles.side, { color: colors.textTertiary }]}>Answer</Text>
-                <Text style={[styles.back, { color: colors.text }]}>{card.back}</Text>
+                {card.type === 'cloze' && card.front.includes('_____') ? (
+                  // Show the completed statement with the filled term highlighted.
+                  <Text style={[styles.back, { color: colors.text }]}>
+                    {card.front.split('_____')[0]}
+                    <Text style={{ color: colors.primary, fontWeight: '700' }}>
+                      {card.back}
+                    </Text>
+                    {card.front.split('_____').slice(1).join('_____')}
+                  </Text>
+                ) : (
+                  <Text style={[styles.back, { color: colors.text }]}>{card.back}</Text>
+                )}
               </View>
             ) : null}
 

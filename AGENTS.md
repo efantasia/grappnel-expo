@@ -56,10 +56,12 @@ before writing Expo-API code.
   `check-material` watches for those objects and imports the transcript
   (`transcript_object` on the row) as `text/plain`. Re-deploy the job after
   changing it — `npx supabase functions deploy` does NOT cover it.
-- Transcripts are timestamped: paragraphs for uploads (`[12:04] Speaker 1: …`
-  from Velma's utterances), one sentence per line for YouTube captions
-  (`[12:04] …`, falling back to time-based breaks when the caption track has
-  no punctuation), so retrieved chunks carry timestamps. `generate-guide` has Gemini cite
+- Transcripts are timestamped as one sentence per line (`[12:04] …`, blank-line
+  separated, falling back to time-based breaks when there's no sentence
+  punctuation) — the SAME shape for uploaded media (`gcp/transcribe-job` from
+  Velma's utterances) and YouTube captions (`_shared/youtube.ts`
+  `formatCaptionTranscript`), so retrieved chunks carry dense per-sentence
+  timestamps. `generate-guide` has Gemini cite
   `[Source: <name> @ 12:04]` inline, then `footnoteCitations` rewrites each
   distinct citation to a numbered footnote reference (`[^n]`) and appends the
   definitions under a `### Sources` heading; for materials with a `source_url`
@@ -148,8 +150,16 @@ before writing Expo-API code.
   topic(s), offers Gemini the `material_figures` of the matched sources, and has
   it author cards — each optionally attaching a figure *by index* (resolved to a
   real `figure_id` server-side, never model-authored) so the card shows an image.
-  It returns a `generating` deck immediately and finishes via
-  `EdgeRuntime.waitUntil`; `flashcard_decks` + `flashcards` rows, clients poll.
+  Cards are `type` `'basic'` (question/answer) or `'cloze'` (fill-in-the-blank:
+  `front` has a `_____` gap, `back` is the missing term; the study screen fills
+  the gap on reveal). **Image answer-reveal review:** after drafting, every
+  figure-bearing card is checked *multimodally* (`generateJsonFromParts` +
+  `readObjectBase64`) — Gemini looks at the actual image and, if the card's
+  answer is visibly shown on it (printed label/title/caption), the figure is
+  dropped from that card (fail-safe: a review error also drops it). So a card
+  never reveals its own answer in its picture. It returns a `generating` deck
+  immediately and finishes via `EdgeRuntime.waitUntil`; `flashcard_decks` +
+  `flashcards` rows, clients poll.
   The generate screen (`src/app/generate.tsx`) is shared: `?mode=flashcards`
   routes it to `generateFlashcards` + `/deck/[id]` (the study screen, which
   renders card images via `expo-image` + signed URLs). Deck list lives on the

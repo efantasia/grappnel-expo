@@ -83,7 +83,7 @@ const OPENALEX_FIELDS: Record<string, string[]> = {
 const STAGE1_PROMPT = `You are Grappnel's academic classifier. You receive the text content (or lecture transcript) of one course material a student uploaded. Identify the main topics the material substantively covers.
 
 Topic rules:
-- Return 1 to ${MAX_TOPICS} topics. A focused handout or single lecture usually covers 1-3; a broad textbook or long recording may cover more.
+- Return 0 to ${MAX_TOPICS} topics. A focused handout or single lecture usually covers 1-3; a broad textbook or long recording may cover more. Return an empty list if the material has no substantive academic topic (e.g. purely administrative or logistical content) — do not force a topic that isn't there.
 - "name" is a short student-facing label for the topic as this material presents it (e.g. "Light reactions of photosynthesis"), at most 200 characters.
 - "summary" is one sentence describing what this material covers about the topic.
 - Only include topics with substantial coverage. Skip passing mentions, boilerplate, and administrative content (syllabus logistics, grading, homework instructions).
@@ -382,18 +382,19 @@ export async function extractMaterialTopics(
       seen.add(oa.topicId);
       rows.push(toRow(material.id, material.user_id, oa));
     }
-    if (rows.length === 0) {
-      throw new Error('No topics matched the OpenAlex taxonomy');
-    }
-
-    // Replace, don't append, so re-runs stay idempotent.
+    // Zero matched topics is a valid outcome — some materials have no clear
+    // academic subject (syllabi, admin handouts). Clear any previous rows
+    // (idempotent replace) and mark extracted rather than treating "no topics"
+    // as an error.
     const { error: deleteError } = await admin
       .from('material_topics')
       .delete()
       .eq('material_id', material.id);
     if (deleteError) throw new Error(deleteError.message);
-    const { error: insertError } = await admin.from('material_topics').insert(rows);
-    if (insertError) throw new Error(insertError.message);
+    if (rows.length > 0) {
+      const { error: insertError } = await admin.from('material_topics').insert(rows);
+      if (insertError) throw new Error(insertError.message);
+    }
 
     await admin
       .from('materials')

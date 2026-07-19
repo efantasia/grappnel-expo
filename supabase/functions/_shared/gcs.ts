@@ -95,6 +95,26 @@ export async function readObjectText(objectName: string): Promise<string> {
   return response.text();
 }
 
+// Reads an object as base64 (for feeding an image inline to Gemini). Chunked
+// encoding avoids the argument-count limit of String.fromCharCode(...bytes).
+export async function readObjectBase64(objectName: string): Promise<string> {
+  const token = await getGoogleAccessToken();
+  const url = `${STORAGE_API}/b/${gcpConfig.gcsBucket}/o/${encodeURIComponent(objectName)}?alt=media`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error(`GCS read failed for ${objectName} (${response.status}): ${await response.text()}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 // Strict RFC 3986 percent-encoding (encodeURIComponent leaves !'()* alone,
 // which breaks V4 signature verification).
 function rfc3986Encode(value: string): string {

@@ -7,9 +7,10 @@
 //      to ~15 MB, comfortably under Velma's 100 MB request cap)
 //   3. POST to Modulate's Velma batch STT API (synchronous — the transcript
 //      comes back in the response)
-//   4. write the transcript to TRANSCRIPT_OBJECT as timestamped paragraphs
-//      ("[12:04] Speaker 1: …") built from Velma's utterances, so search
-//      chunks — and ultimately study-guide citations — carry timestamps
+//   4. write the transcript to TRANSCRIPT_OBJECT as one timestamped sentence
+//      per line ("[12:04] …", blank-line separated) built from Velma's
+//      utterances — the same shape as YouTube caption transcripts, so search
+//      chunks and study-guide citations carry dense per-sentence timestamps
 //
 // On any failure the error message is written to ERROR_OBJECT instead and
 // the process exits 0 — check-material reads the marker; a non-zero exit is
@@ -122,49 +123,66 @@ async function transcribe(audioPath, apiKey) {
   return result;
 }
 
-function formatTimestamp(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
+// Sentence splitting mirrors supabase/functions/_shared/youtube.ts so uploaded-
+// media transcripts look exactly like YouTube ones: sentence-final punctuation
+// (optionally wrapped in closing quotes/brackets) at a whitespace boundary, so
+// decimals ("3.14") don't split.
+const SENTENCE_SPLIT_RE = /(?<=[.!?…]["')\]]*)\s+/;
+const SENTENCE_END_RE = /[.!?…]["')\]]*$/;
+// If a stretch carries no sentence-final punctuation, break on time instead so
+// timestamps stay dense enough to cite.
+const SENTENCE_MAX_SECONDS = 30;
+
+function formatTimestamp(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = String(total % 60).padStart(2, '0');
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
-// A new paragraph starts on speaker change or after this much audio, so every
-// search chunk downstream contains several timestamp markers.
-const PARAGRAPH_MAX_MS = 60_000;
+// Velma utterances as { offset(seconds), text } segments — the analog of a
+// YouTube caption cue. A sentence is stamped with the offset of the utterance
+// it starts in.
+function utteranceSegments(result) {
+  return (Array.isArray(result.utterances) ? result.utterances : [])
+    .map((u) => ({
+      offset:
+        typeof u.start_ms === 'number' && Number.isFinite(u.start_ms) ? u.start_ms / 1000 : null,
+      text: typeof u.text === 'string' ? u.text.trim() : '',
+    }))
+    .filter((s) => s.offset !== null && s.text !== '');
+}
 
-// Renders Velma's utterances as timestamped paragraphs:
-//   [12:04] Speaker 1: We can now define the derivative as …
-// Falls back to the flat text if the response carries no usable utterances.
+// Renders the transcript as one timestamped sentence per line, blank-line
+// separated — identical to _shared/youtube.ts's formatCaptionTranscript. Falls
+// back to the flat text if the response carries no usable (timed) utterances.
 function formatTranscript(result) {
-  const utterances = (Array.isArray(result.utterances) ? result.utterances : [])
-    .filter((u) => typeof u.text === 'string' && u.text.trim() !== '' && typeof u.start_ms === 'number')
-    .sort((a, b) => a.start_ms - b.start_ms);
-  if (utterances.length === 0) return result.text;
+  const segments = utteranceSegments(result).sort((a, b) => a.offset - b.offset);
+  if (segments.length === 0) return typeof result.text === 'string' ? result.text : '';
 
-  const multiSpeaker = new Set(utterances.map((u) => u.speaker).filter((s) => s != null)).size > 1;
+  const lines = [];
+  let pending = [];
+  let start = 0;
+  const flush = () => {
+    if (pending.length === 0) return;
+    lines.push(`[${formatTimestamp(start)}] ${pending.join(' ')}`);
+    pending = [];
+  };
 
-  const paragraphs = [];
-  let current = null;
-  for (const u of utterances) {
-    if (
-      !current ||
-      (multiSpeaker && u.speaker !== current.speaker) ||
-      u.start_ms - current.startMs >= PARAGRAPH_MAX_MS
-    ) {
-      current = { startMs: u.start_ms, speaker: u.speaker, texts: [] };
-      paragraphs.push(current);
+  for (const segment of segments) {
+    if (pending.length > 0 && segment.offset - start >= SENTENCE_MAX_SECONDS) flush();
+    for (const piece of segment.text.split(SENTENCE_SPLIT_RE)) {
+      const trimmed = piece.trim();
+      if (trimmed === '') continue;
+      if (pending.length === 0) start = segment.offset;
+      pending.push(trimmed);
+      if (SENTENCE_END_RE.test(trimmed)) flush();
     }
-    current.texts.push(u.text.trim());
   }
+  flush();
 
-  return paragraphs
-    .map((p) => {
-      const speaker = multiSpeaker && p.speaker != null ? ` Speaker ${p.speaker}:` : '';
-      return `[${formatTimestamp(p.startMs)}]${speaker} ${p.texts.join(' ')}`;
-    })
-    .join('\n\n');
+  return lines.join('\n\n');
 }
 
 async function main() {

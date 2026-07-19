@@ -11,7 +11,8 @@
 import { handleOptions, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { adminClient, getRequestUser } from '../_shared/supabase.ts';
 import { searchChunks, RetrievedChunk } from '../_shared/discovery.ts';
-import { generateJson } from '../_shared/gemini.ts';
+import { generateJson, generateJsonFromParts } from '../_shared/gemini.ts';
+import { readObjectBase64 } from '../_shared/gcs.ts';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
@@ -20,12 +21,16 @@ const SYSTEM_PROMPT = `You are Grappnel, an expert study assistant that builds f
 
 You will receive one or more topics, numbered excerpts retrieved from the student's uploaded materials, and a numbered list of figures (images) extracted from those materials. Write a set of study flashcards based ONLY on those excerpts and figures.
 
+Card types — set "type" on every card:
+- "basic": "front" is a question, "back" is the answer.
+- "cloze": a fill-in-the-blank. "front" is a complete statement with the single most important term replaced by exactly "_____" (five underscores); "back" is that missing term only. Example: front "The _____ is the primary site of glucose reabsorption in the nephron.", back "proximal convoluted tubule". Use cloze for definitions, key terms, and labeling facts; use basic for conceptual or reasoning questions. Include a healthy mix of both.
+
 Requirements:
 - Produce 10 to 20 cards. Prefer fewer, high-quality cards over padding.
-- Each card has a "front" (a question or prompt) and a "back" (the answer/explanation). Keep the front focused on a single idea; keep the back concise but complete.
+- Keep the front focused on a single idea; keep the back concise but complete.
 - Write plain text. Do NOT use Markdown, HTML, or LaTeX delimiters. Write formulas and symbols in readable plain text (e.g. "GFR < 60 mL/min/1.73m^2").
 - "hint" is optional: a short nudge that helps recall without giving away the answer.
-- When a listed figure directly illustrates a card, set "figure_index" to that figure's number so the image is shown with the card. Use a figure only when it genuinely helps (e.g. "What does this diagram show?", "Label the structure indicated"). Do NOT attach a figure that is unrelated, and never invent a figure that is not in the list. Omit figure_index (or use -1) for text-only cards.
+- Figures: when a listed figure helps a card, set "figure_index" to that figure's number. IMPORTANT: attached images are automatically reviewed and REMOVED if the card's answer is visibly shown on the image (a printed label, title, or caption) — that would give the answer away. So never rely on the image to carry the answer: for a labeling or cloze card, attach a figure only when the answer is NOT written on it, and phrase the card so it still makes sense if the image is removed. Do not attach unrelated figures, and never invent a figure that is not in the list. Omit figure_index (or use -1) for text-only cards.
 - "source" is the name of the material the card's content came from, exactly as it appears in the excerpt label (e.g. "Cell Biology Ch 3"). Include it when a card draws on a specific source.
 - Cover the topic(s) broadly; when several topics are given, include cards for each.
 - Do not invent facts that are not supported by the excerpts or figures.`;
@@ -38,13 +43,14 @@ const CARD_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
+          type: { type: 'STRING', enum: ['basic', 'cloze'] },
           front: { type: 'STRING' },
           back: { type: 'STRING' },
           hint: { type: 'STRING' },
           figure_index: { type: 'INTEGER' }, // -1 (or omitted) => no figure
           source: { type: 'STRING' },
         },
-        required: ['front', 'back'],
+        required: ['type', 'front', 'back'],
       },
     },
   },
@@ -52,6 +58,7 @@ const CARD_SCHEMA = {
 };
 
 interface GeneratedCard {
+  type?: string;
   front?: string;
   back?: string;
   hint?: string;
@@ -68,6 +75,8 @@ interface FigureOption {
   materialId: string;
   caption: string | null;
   altText: string | null;
+  gcsObject: string;
+  mimeType: string;
 }
 
 const CHUNK_CAP = 20;
@@ -132,7 +141,7 @@ async function figuresForMaterials(
   if (materialIds.length === 0) return [];
   const { data } = await admin
     .from('material_figures')
-    .select('id, material_id, caption, alt_text, ordinal')
+    .select('id, material_id, caption, alt_text, ordinal, gcs_object, mime_type')
     .in('material_id', materialIds)
     .eq('user_id', userId)
     .order('material_id', { ascending: true })
@@ -143,7 +152,55 @@ async function figuresForMaterials(
     materialId: f.material_id as string,
     caption: (f.caption as string | null) ?? null,
     altText: (f.alt_text as string | null) ?? null,
+    gcsObject: f.gcs_object as string,
+    mimeType: (f.mime_type as string) || 'image/jpeg',
   }));
+}
+
+// Gemini reviews the actual image for each figure-bearing card and drops the
+// figure if the card's answer is visibly shown on it (a printed label, title,
+// or caption) — so no card ever reveals its own answer in its picture. Runs
+// concurrently; a review failure fails safe (drops the image).
+const REVIEW_SYSTEM =
+  "You check whether a flashcard's answer is visibly present in an image — " +
+  'printed as a label, title, caption, or otherwise plainly readable — which ' +
+  'would give the answer away to a student studying the card.';
+
+const REVIEW_SCHEMA = {
+  type: 'OBJECT',
+  properties: { revealed: { type: 'BOOLEAN' } },
+  required: ['revealed'],
+};
+
+async function reviewFigureReveals(
+  rows: { figure_id: string | null; back: string }[],
+  figuresById: Map<string, FigureOption>,
+): Promise<void> {
+  await Promise.all(
+    rows.map(async (row) => {
+      if (!row.figure_id) return;
+      const figure = figuresById.get(row.figure_id);
+      if (!figure) return;
+      try {
+        const data = await readObjectBase64(figure.gcsObject);
+        const result = await generateJsonFromParts<{ revealed?: boolean }>(
+          REVIEW_SYSTEM,
+          [
+            { inlineData: { mimeType: figure.mimeType, data } },
+            {
+              text: `The flashcard answer is: "${row.back}". Is this answer visibly revealed in the image (e.g. printed as a label, title, or caption)? Return {"revealed": true} if it is clearly shown, otherwise {"revealed": false}.`,
+            },
+          ],
+          REVIEW_SCHEMA,
+        );
+        if (result.revealed) row.figure_id = null;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`figure review failed; dropping image to be safe: ${message}`);
+        row.figure_id = null;
+      }
+    }),
+  );
 }
 
 function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>): string {
@@ -227,6 +284,7 @@ ${buildFigureList(figures, sources)}`;
         deck_id: deckId,
         user_id: userId,
         ordinal: i,
+        type: card.type === 'cloze' ? 'cloze' : 'basic',
         front: card.front!.trim().slice(0, 4000),
         back: card.back!.trim().slice(0, 4000),
         hint: card.hint?.trim() ? card.hint.trim().slice(0, 1000) : null,
@@ -234,6 +292,10 @@ ${buildFigureList(figures, sources)}`;
         citation: card.source?.trim() ? card.source.trim().slice(0, 200) : null,
       };
     });
+
+    // Drop any figure whose card answer is visible on the image (Gemini review).
+    const figuresById = new Map(figures.map((f) => [f.id, f]));
+    await reviewFigureReveals(rows, figuresById);
 
     const { error: insertError } = await admin.from('flashcards').insert(rows);
     if (insertError) throw new Error(insertError.message);

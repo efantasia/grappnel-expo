@@ -89,7 +89,11 @@ export default function GuideScreen() {
         </View>
       ) : guide.status === 'error' ? (
         <View style={styles.center}>
-          <StatusBadge status="error" />
+          {/* Wrap so the badge's own alignSelf:'flex-start' doesn't pin it left
+              of the centered message. */}
+          <View>
+            <StatusBadge status="error" />
+          </View>
           <Text style={[styles.centerText, { color: colors.textSecondary }]}>
             {guide.error_message ?? 'Something went wrong generating this guide.'}
           </Text>
