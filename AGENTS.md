@@ -36,6 +36,12 @@ before writing Expo-API code.
   Browser PUTs require the bucket CORS config set by `scripts/setup-gcp.sh`.
   `storage_path` (and the `uploaded` status) survive only on legacy rows
   that predate this flow.
+- Downloads also skip Supabase: `download-material` mints a short-lived V4
+  signed GCS URL (signed locally with the service-account key in
+  `_shared/gcs.ts`, `response-content-disposition: attachment`) for the
+  material's `gcs_object`; `get-transcript` returns transcript text read
+  server-side. `src/lib/download.ts` (+ `.web.ts`) handles both per platform
+  (share sheet on native, browser download on web) from the material "…" menu.
 - Material lifecycle: `uploading → syncing → [transcribing →] indexing →
   indexed | error` (statuses set by `create-upload` / `sync-material` /
   `check-material`).
@@ -96,13 +102,14 @@ before writing Expo-API code.
   its matched `openalex_topics` row (for the description + keywords);
   `aggregateTopics` collapses rows across materials keyed by OpenAlex topic id
   (representative higher levels = most-common non-null label); `groupTopics`
-  buckets by OpenAlex field or domain. The **Explore** tab
-  (`src/app/(tabs)/topics.tsx`) browses those groups; the topic detail screen
-  (`src/app/topic/[id].tsx`, keyed by the OpenAlex topic id) shows the OpenAlex
-  hierarchy, the official description + keywords, a link to the canonical
-  Wikipedia article, and covering sources, and deep-links into `/generate?topic=…`
-  (passing the display name). The generate screen also offers the deduped topic
-  names as inline one-tap chips.
+  buckets by OpenAlex subfield (with the field as a sub-label). The **Explore**
+  tab (`src/app/(tabs)/topics.tsx`) browses those groups; the topic detail
+  screen (`src/app/topic/[id].tsx`, keyed by the OpenAlex topic id) shows the
+  OpenAlex hierarchy, the official description + keywords, a link to the
+  canonical Wikipedia article, and covering sources (each with the shared
+  material "…" menu — open/download/rename/move/delete), and deep-links into
+  `/generate?topic=…` (passing the display name). The generate screen also
+  offers the deduped topic names as inline one-tap chips.
 - Renaming/moving a material must re-sync the search index metadata
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row

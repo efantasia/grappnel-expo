@@ -21,7 +21,7 @@ export async function getGuide(id: string): Promise<ServiceResult<StudyGuide>> {
 }
 
 export interface GenerateGuideInput {
-  topic: string;
+  topics: string[];
   title?: string;
   folderId?: string | null;
   materialIds?: string[];
@@ -35,7 +35,7 @@ export async function generateGuide(
   const { data, error } = await invokeFunction<{ guide: StudyGuide }>(
     'generate-guide',
     {
-      topic: input.topic,
+      topics: input.topics,
       title: input.title,
       folder_id: input.folderId ?? null,
       material_ids: input.materialIds,

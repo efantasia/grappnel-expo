@@ -1,20 +1,24 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { CirclePlay, ExternalLink, FileText, Layers } from 'lucide-react-native';
+import { CirclePlay, ExternalLink, FileText, Layers, MoreVertical } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { MaterialActions } from '@/components/material-actions';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { Screen } from '@/components/ui/screen';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
+import { listFolders } from '@/lib/services/folders';
 import {
   aggregateTopics,
   AggregatedTopic,
+  formatTopicDescription,
   listTopics,
   openAlexPath,
 } from '@/lib/services/topics';
+import { Folder, Material } from '@/lib/types';
 
 export default function TopicDetailScreen() {
   const colors = useThemeColors();
@@ -23,12 +27,18 @@ export default function TopicDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const [topic, setTopic] = useState<AggregatedTopic | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
-    const { data } = await listTopics();
-    setTopic(aggregateTopics(data ?? []).find((t) => t.key === id) ?? null);
+    const [topicResult, folderResult] = await Promise.all([
+      listTopics(),
+      listFolders(),
+    ]);
+    setTopic(aggregateTopics(topicResult.data ?? []).find((t) => t.key === id) ?? null);
+    if (folderResult.data) setFolders(folderResult.data);
     setLoaded(true);
   }, [id]);
 
@@ -84,7 +94,7 @@ export default function TopicDetailScreen() {
                 OpenAlex description
               </Text>
               <Text style={[styles.classValue, { color: colors.text }]}>
-                {topic.openalexDescription}
+                {formatTopicDescription(topic.openalexDescription)}
               </Text>
             </View>
           ) : null}
@@ -129,31 +139,42 @@ export default function TopicDetailScreen() {
         <View style={styles.sourceList}>
           {topic.materials.map((material) => {
             const Icon = material.source_type === 'youtube' ? CirclePlay : FileText;
-            const row = (
+            return (
               <View
+                key={material.id}
                 style={[styles.source, { backgroundColor: colors.surface, borderColor: colors.border }]}
               >
-                <View style={[styles.sourceIcon, { backgroundColor: colors.primarySoft }]}>
-                  <Icon size={18} color={colors.primary} />
-                </View>
-                <Text style={[styles.sourceTitle, { color: colors.text }]} numberOfLines={2}>
-                  {material.title}
-                </Text>
+                <Pressable
+                  style={styles.sourceBody}
+                  disabled={!material.folder_id}
+                  onPress={() => router.push(`/folder/${material.folder_id}`)}
+                >
+                  <View style={[styles.sourceIcon, { backgroundColor: colors.primarySoft }]}>
+                    <Icon size={18} color={colors.primary} />
+                  </View>
+                  <Text style={[styles.sourceTitle, { color: colors.text }]} numberOfLines={2}>
+                    {material.title}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setSelectedMaterial(material)}
+                  hitSlop={8}
+                  style={styles.sourceMenu}
+                >
+                  <MoreVertical size={20} color={colors.textSecondary} />
+                </Pressable>
               </View>
-            );
-            return material.folder_id ? (
-              <Pressable
-                key={material.id}
-                onPress={() => router.push(`/folder/${material.folder_id}`)}
-              >
-                {row}
-              </Pressable>
-            ) : (
-              <View key={material.id}>{row}</View>
             );
           })}
         </View>
       </ScrollView>
+
+      <MaterialActions
+        material={selectedMaterial}
+        folders={folders}
+        onDismiss={() => setSelectedMaterial(null)}
+        onChanged={load}
+      />
     </Screen>
   );
 }
@@ -243,6 +264,15 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     padding: Spacing.three,
     gap: Spacing.three,
+  },
+  sourceBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  sourceMenu: {
+    padding: 2,
   },
   sourceIcon: {
     width: 36,

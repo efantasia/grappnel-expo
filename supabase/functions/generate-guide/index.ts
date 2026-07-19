@@ -17,10 +17,11 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | unde
 
 const SYSTEM_PROMPT = `You are Grappnel, an expert study assistant that builds study guides for students from their own course materials.
 
-You will receive a topic and numbered excerpts retrieved from the student's uploaded materials (textbooks, lecture notes, slides). Write a comprehensive study guide in Markdown based ONLY on those excerpts.
+You will receive one or more topics and numbered excerpts retrieved from the student's uploaded materials (textbooks, lecture notes, slides). Write a comprehensive study guide in Markdown based ONLY on those excerpts.
 
 Requirements:
-- Start with a one-paragraph overview of the topic.
+- Start with a one-paragraph overview of the topic(s).
+- When several topics are given, cover each of them, organizing the body so every topic is addressed (a dedicated section per topic works well when they are distinct).
 - Organize the body into clear sections with ## headings; use bullet points, tables, and **bold key terms** where helpful.
 - Include a "Key Terms" section defining important vocabulary.
 - Include a "Self-Check Questions" section with 5-8 questions (answers in a separate "Answers" section at the end).
@@ -66,6 +67,41 @@ function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>
     .join('\n\n---\n\n');
 }
 
+// The most chunks any single guide feeds to Gemini, and the ceiling on how
+// many topics one request may fan out into (each topic is its own search).
+const CHUNK_CAP = 18;
+const MAX_TOPICS = 8;
+
+// Retrieves chunks for each topic separately and interleaves them round-robin,
+// so a multi-topic guide gives every topic balanced representation instead of
+// letting one topic's high-scoring chunks crowd out the others. Deduped by
+// (material, chunk text) since the same excerpt can match several topics.
+async function retrieveForTopics(
+  topics: string[],
+  scope: { userId: string; folderId: string | null; materialIds: string[] | undefined },
+): Promise<RetrievedChunk[]> {
+  const perTopic = Math.max(5, Math.ceil(CHUNK_CAP / topics.length));
+  const lists = await Promise.all(
+    topics.map((topic) => searchChunks(topic, scope, perTopic)),
+  );
+
+  const seen = new Set<string>();
+  const merged: RetrievedChunk[] = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < longest && merged.length < CHUNK_CAP; i++) {
+    for (const list of lists) {
+      if (merged.length >= CHUNK_CAP) break;
+      const chunk = list[i];
+      if (!chunk) continue;
+      const key = `${chunk.materialId}::${chunk.content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(chunk);
+    }
+  }
+  return merged;
+}
+
 function timestampToSeconds(ts: string): number | null {
   const parts = ts.split(':').map(Number);
   if (parts.length < 2 || parts.length > 3 || parts.some((n) => !Number.isFinite(n))) {
@@ -103,17 +139,13 @@ function linkifyCitations(content: string, sources: Map<string, SourceInfo>): st
 async function runGeneration(
   guideId: string,
   userId: string,
-  topic: string,
+  topics: string[],
   folderId: string | null,
   materialIds: string[] | undefined,
 ): Promise<void> {
   const admin = adminClient();
   try {
-    const chunks = await searchChunks(topic, {
-      userId,
-      folderId,
-      materialIds,
-    }, 15);
+    const chunks = await retrieveForTopics(topics, { userId, folderId, materialIds });
 
     if (chunks.length === 0) {
       await admin
@@ -121,16 +153,22 @@ async function runGeneration(
         .update({
           status: 'error',
           error_message:
-            'No indexed material matched this topic. Make sure your sources have finished indexing, or try a broader topic.',
+            topics.length > 1
+              ? 'No indexed material matched these topics. Make sure your sources have finished indexing, or try broader topics.'
+              : 'No indexed material matched this topic. Make sure your sources have finished indexing, or try a broader topic.',
         })
         .eq('id', guideId);
       return;
     }
 
+    const topicLabel =
+      topics.length === 1
+        ? `Topic: ${topics[0]}`
+        : `Topics:\n${topics.map((t) => `- ${t}`).join('\n')}`;
     const sources = await sourcesByMaterial(admin, userId, chunks);
     const content = await generateText(
       SYSTEM_PROMPT,
-      `Topic: ${topic}\n\nExcerpts from my materials:\n\n${buildContext(chunks, sources)}`,
+      `${topicLabel}\n\nExcerpts from my materials:\n\n${buildContext(chunks, sources)}`,
     );
 
     await admin
@@ -161,6 +199,7 @@ Deno.serve(async (req) => {
 
   let body: {
     topic?: string;
+    topics?: string[];
     title?: string;
     folder_id?: string | null;
     material_ids?: string[];
@@ -170,8 +209,13 @@ Deno.serve(async (req) => {
   } catch {
     return errorResponse('Invalid JSON body');
   }
-  const topic = body.topic?.trim();
-  if (!topic) return errorResponse('topic is required');
+  // Accept a `topics` array; fall back to the legacy single `topic` string.
+  const rawTopics = Array.isArray(body.topics) ? body.topics : [body.topic];
+  const topics = [
+    ...new Set(rawTopics.map((t) => t?.trim()).filter((t): t is string => !!t)),
+  ].slice(0, MAX_TOPICS);
+  if (topics.length === 0) return errorResponse('at least one topic is required');
+  const topicSummary = topics.join(', ');
 
   const admin = adminClient();
   const { data: guide, error: insertError } = await admin
@@ -179,8 +223,8 @@ Deno.serve(async (req) => {
     .insert({
       user_id: user.id,
       folder_id: body.folder_id ?? null,
-      title: body.title?.trim() || topic,
-      topic,
+      title: body.title?.trim() || topicSummary,
+      topic: topicSummary,
       status: 'generating',
     })
     .select()
@@ -192,7 +236,7 @@ Deno.serve(async (req) => {
   const generation = runGeneration(
     guide.id,
     user.id,
-    topic,
+    topics,
     body.folder_id ?? null,
     body.material_ids,
   );

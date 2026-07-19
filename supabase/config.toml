@@ -430,3 +430,9 @@ verify_jwt = true
 
 [functions.add-youtube-material]
 verify_jwt = true
+
+[functions.get-transcript]
+verify_jwt = true
+
+[functions.download-material]
+verify_jwt = true

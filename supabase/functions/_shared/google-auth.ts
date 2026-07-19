@@ -29,7 +29,7 @@ function pemToDer(pem: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-function loadServiceAccount(): ServiceAccount {
+export function loadServiceAccount(): ServiceAccount {
   const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON');
   if (!raw) throw new Error('Missing required env var: GOOGLE_SERVICE_ACCOUNT_JSON');
   const parsed = JSON.parse(raw);
@@ -37,6 +37,25 @@ function loadServiceAccount(): ServiceAccount {
     throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not a valid service account key');
   }
   return parsed;
+}
+
+// Signs data with the service account's RSA key (SHA-256). Used for the OAuth
+// JWT flow below and for GCS V4 signed URLs (gcs.ts).
+export async function signRsaSha256(data: string): Promise<Uint8Array> {
+  const sa = loadServiceAccount();
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    pemToDer(sa.private_key),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    new TextEncoder().encode(data),
+  );
+  return new Uint8Array(signature);
 }
 
 export async function getGoogleAccessToken(): Promise<string> {
@@ -57,20 +76,8 @@ export async function getGoogleAccessToken(): Promise<string> {
     }),
   );
   const unsigned = `${header}.${claims}`;
-
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToDer(sa.private_key),
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(unsigned),
-  );
-  const jwt = `${unsigned}.${base64UrlEncode(new Uint8Array(signature))}`;
+  const signature = await signRsaSha256(unsigned);
+  const jwt = `${unsigned}.${base64UrlEncode(signature)}`;
 
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',

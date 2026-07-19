@@ -1,6 +1,6 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronDown } from 'lucide-react-native';
-import React, { useCallback, useState } from 'react';
+import { Check, ChevronDown } from 'lucide-react-native';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -30,12 +30,37 @@ export default function GenerateScreen() {
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderId, setFolderId] = useState<string | null>(params.folderId ?? null);
-  const [topic, setTopic] = useState(params.topic ?? '');
+  // Topics chosen from the suggestion chips (multi-select) plus an optional
+  // free-text topic; both are combined when the guide is generated.
+  const [selectedTopics, setSelectedTopics] = useState<string[]>(
+    params.topic ? [params.topic] : [],
+  );
+  const [customTopic, setCustomTopic] = useState('');
   const [title, setTitle] = useState('');
   const [suggestions, setSuggestions] = useState<TopicSuggestion[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const toggleTopic = (name: string) => {
+    setSelectedTopics((prev) =>
+      prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name],
+    );
+  };
+
+  // Chips shown: the folder's suggestions, plus any selected topic that isn't
+  // in that list (e.g. one deep-linked in from the topic detail screen) so it
+  // still renders as selected.
+  const topicChips = useMemo(() => {
+    const names = suggestions.slice(0, MAX_TOPIC_SUGGESTIONS).map((s) => s.name);
+    const extras = selectedTopics.filter((t) => !names.includes(t));
+    return [...names, ...extras];
+  }, [suggestions, selectedTopics]);
+
+  const topics = useMemo(() => {
+    const custom = customTopic.trim();
+    return [...new Set(custom ? [...selectedTopics, custom] : selectedTopics)];
+  }, [selectedTopics, customTopic]);
 
   useFocusEffect(
     useCallback(() => {
@@ -63,7 +88,7 @@ export default function GenerateScreen() {
     setError(null);
     setSubmitting(true);
     const { data, error: generateError } = await generateGuide({
-      topic,
+      topics,
       title: title.trim() || undefined,
       folderId,
     });
@@ -87,27 +112,21 @@ export default function GenerateScreen() {
           Tell Grappnel what to cover and which sources to use. The guide is
           built only from your uploaded materials.
         </Text>
-        <TextField
-          label="Topic"
-          value={topic}
-          onChangeText={setTopic}
-          placeholder="e.g. Photosynthesis light reactions, Chapters 4-6, Midterm 2 review"
-          multiline
-          numberOfLines={3}
-          style={styles.topicInput}
-        />
-        {suggestions.length > 0 ? (
+        {topicChips.length > 0 ? (
           <>
             <Text style={[styles.label, { color: colors.textSecondary }]}>
               Topics found in your materials
             </Text>
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
+              Tap to add one or more to your guide.
+            </Text>
             <View style={styles.chips}>
-              {suggestions.slice(0, MAX_TOPIC_SUGGESTIONS).map((suggestion) => {
-                const selected = topic === suggestion.name;
+              {topicChips.map((name) => {
+                const selected = selectedTopics.includes(name);
                 return (
                   <Pressable
-                    key={suggestion.name}
-                    onPress={() => setTopic(suggestion.name)}
+                    key={name}
+                    onPress={() => toggleTopic(name)}
                     style={[
                       styles.chip,
                       {
@@ -116,8 +135,9 @@ export default function GenerateScreen() {
                       },
                     ]}
                   >
+                    {selected ? <Check size={14} color={colors.primary} /> : null}
                     <Text style={{ color: selected ? colors.primary : colors.text, fontSize: 14 }}>
-                      {suggestion.name}
+                      {name}
                     </Text>
                   </Pressable>
                 );
@@ -126,10 +146,19 @@ export default function GenerateScreen() {
           </>
         ) : null}
         <TextField
+          label={topicChips.length > 0 ? 'Add another topic (optional)' : 'Topic'}
+          value={customTopic}
+          onChangeText={setCustomTopic}
+          placeholder="e.g. Photosynthesis light reactions, Chapters 4-6, Midterm 2 review"
+          multiline
+          numberOfLines={3}
+          style={styles.topicInput}
+        />
+        <TextField
           label="Guide title (optional)"
           value={title}
           onChangeText={setTitle}
-          placeholder="Defaults to the topic"
+          placeholder="Defaults to the topics"
         />
         <Text style={[styles.label, { color: colors.textSecondary }]}>Sources</Text>
         <Pressable
@@ -147,7 +176,7 @@ export default function GenerateScreen() {
           title="Generate study guide"
           onPress={handleGenerate}
           loading={submitting}
-          disabled={!topic.trim()}
+          disabled={topics.length === 0}
         />
       </ScrollView>
 
@@ -189,6 +218,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  hint: {
+    fontSize: 13,
+    marginTop: -Spacing.two,
+  },
   topicInput: {
     minHeight: 84,
     textAlignVertical: 'top',
@@ -199,6 +232,9 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
     borderWidth: 1,
     borderRadius: Radius.pill,
     paddingHorizontal: Spacing.three,

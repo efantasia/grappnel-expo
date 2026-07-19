@@ -20,13 +20,7 @@ import {
   AggregatedTopic,
   groupTopics,
   listTopics,
-  TopicDimension,
 } from '@/lib/services/topics';
-
-const DIMENSIONS: { key: TopicDimension; label: string }[] = [
-  { key: 'field', label: 'Field' },
-  { key: 'domain', label: 'Domain' },
-];
 
 type TopicRowItem = AggregatedTopic & { rowKey: string };
 
@@ -35,7 +29,6 @@ export default function TopicsScreen() {
   const router = useRouter();
 
   const [topics, setTopics] = useState<AggregatedTopic[]>([]);
-  const [dimension, setDimension] = useState<TopicDimension>('field');
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -51,11 +44,10 @@ export default function TopicsScreen() {
     }, [load]),
   );
 
-  // Same topic can land in several Wikipedia groups, so row keys are scoped by
-  // group to stay unique across the whole SectionList.
+  // Row keys are scoped by group to stay unique across the whole SectionList.
   const sections = useMemo(
     () =>
-      groupTopics(topics, dimension).map((group) => ({
+      groupTopics(topics).map((group) => ({
         title: group.label,
         sublabel: group.sublabel,
         data: group.topics.map<TopicRowItem>((topic) => ({
@@ -63,7 +55,7 @@ export default function TopicsScreen() {
           rowKey: `${group.key}::${topic.key}`,
         })),
       })),
-    [topics, dimension],
+    [topics],
   );
 
   const handleRefresh = async () => {
@@ -75,31 +67,6 @@ export default function TopicsScreen() {
   return (
     <Screen>
       <ScreenHeader title="Explore topics" />
-      <View style={styles.segment}>
-        {DIMENSIONS.map((option) => {
-          const active = option.key === dimension;
-          return (
-            <Pressable
-              key={option.key}
-              onPress={() => setDimension(option.key)}
-              style={[
-                styles.segmentItem,
-                { backgroundColor: active ? colors.primary : colors.surfaceAlt },
-              ]}
-            >
-              <Text
-                style={{
-                  color: active ? colors.onPrimary : colors.textSecondary,
-                  fontWeight: '600',
-                  fontSize: 14,
-                }}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.rowKey}
@@ -155,18 +122,6 @@ export default function TopicsScreen() {
 }
 
 const styles = StyleSheet.create({
-  segment: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-    marginBottom: Spacing.three,
-  },
-  segmentItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radius.pill,
-    paddingVertical: Spacing.two,
-  },
   sectionHeader: {
     marginTop: Spacing.two,
     marginBottom: Spacing.one,

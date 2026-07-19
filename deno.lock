@@ -67,11 +67,9 @@
         "npm:@react-native-async-storage/async-storage@2.2.0",
         "npm:@supabase/supabase-js@^2.110.0",
         "npm:@types/react@~19.2.2",
-        "npm:base64-arraybuffer@^1.0.2",
         "npm:eslint-config-expo@57.0",
         "npm:eslint@9",
         "npm:expo-constants@~57.0.3",
-        "npm:expo-crypto@57.0",
         "npm:expo-device@57.0",
         "npm:expo-document-picker@57.0",
         "npm:expo-file-system@57.0",
@@ -81,6 +79,7 @@
         "npm:expo-image@57.0",
         "npm:expo-linking@~57.0.1",
         "npm:expo-router@~57.0.3",
+        "npm:expo-sharing@~57.0.6",
         "npm:expo-splash-screen@~57.0.2",
         "npm:expo-status-bar@57.0",
         "npm:expo-symbols@57.0",
@@ -100,6 +99,7 @@
         "npm:react-native-worklets@0.10.0",
         "npm:react-native@0.86.0",
         "npm:react@19.2.3",
+        "npm:supabase@^2.109.1",
         "npm:typescript@~6.0.3"
       ]
     }

@@ -1,20 +1,6 @@
 import { ServiceResult } from '@/lib/services/folders';
 import { supabase } from '@/lib/supabase';
-import {
-  MaterialSourceType,
-  MaterialStatus,
-  MaterialTopic,
-} from '@/lib/types';
-
-// A material_topics row joined to its material (title/status/folder), so the
-// exploration screens can render sources without a second query.
-interface JoinedMaterial {
-  id: string;
-  title: string;
-  source_type: MaterialSourceType;
-  status: MaterialStatus;
-  folder_id: string | null;
-}
+import { Material, MaterialTopic } from '@/lib/types';
 
 // The matched OpenAlex topic's authoritative description + keywords, embedded
 // via material_topics.openalex_topic_id (null when no topic was matched).
@@ -23,8 +9,11 @@ interface JoinedOpenAlexTopic {
   keywords: string[] | null;
 }
 
+// A material_topics row joined to its full material row, so the exploration
+// screens can render sources — and drive the material actions menu — without
+// a second query.
 export interface TopicRow extends MaterialTopic {
-  materials: JoinedMaterial | null;
+  materials: Material | null;
   openalex_topics: JoinedOpenAlexTopic | null;
 }
 
@@ -36,7 +25,7 @@ export async function listTopics(
   let query = supabase
     .from('material_topics')
     .select(
-      '*, materials!inner(id, title, source_type, status, folder_id), openalex_topics(description, keywords)',
+      '*, materials!inner(*), openalex_topics(description, keywords)',
     )
     .order('created_at', { ascending: false });
   if (folderId) query = query.eq('materials.folder_id', folderId);
@@ -69,14 +58,6 @@ export function toTopicSuggestions(topics: MaterialTopic[]): TopicSuggestion[] {
     );
 }
 
-export interface TopicMaterialRef {
-  id: string;
-  title: string;
-  source_type: MaterialSourceType;
-  status: MaterialStatus;
-  folder_id: string | null;
-}
-
 // One OpenAlex topic collapsed across every material that covers it. `key` is
 // the OpenAlex topic id (stable, used for routing); `name` is the topic's
 // display name. Higher levels of the hierarchy are the most common non-null
@@ -84,7 +65,7 @@ export interface TopicMaterialRef {
 export interface AggregatedTopic {
   key: string; // OpenAlex topic id, e.g. "T10085"
   name: string; // OpenAlex topic display name
-  materials: TopicMaterialRef[];
+  materials: Material[];
   materialCount: number;
   openalexDomain: string | null;
   openalexField: string | null;
@@ -118,7 +99,7 @@ function mostCommon(values: (string | null | undefined)[]): string | null {
 export function aggregateTopics(rows: TopicRow[]): AggregatedTopic[] {
   const byKey = new Map<
     string,
-    { name: string; rows: TopicRow[]; materials: Map<string, TopicMaterialRef> }
+    { name: string; rows: TopicRow[]; materials: Map<string, Material> }
   >();
 
   for (const row of rows) {
@@ -128,17 +109,11 @@ export function aggregateTopics(rows: TopicRow[]): AggregatedTopic[] {
     const entry = byKey.get(key) ?? {
       name,
       rows: [],
-      materials: new Map<string, TopicMaterialRef>(),
+      materials: new Map<string, Material>(),
     };
     entry.rows.push(row);
     if (row.materials) {
-      entry.materials.set(row.materials.id, {
-        id: row.materials.id,
-        title: row.materials.title,
-        source_type: row.materials.source_type,
-        status: row.materials.status,
-        folder_id: row.materials.folder_id,
-      });
+      entry.materials.set(row.materials.id, row.materials);
     }
     byKey.set(key, entry);
   }
@@ -169,26 +144,19 @@ export function aggregateTopics(rows: TopicRow[]): AggregatedTopic[] {
   return result;
 }
 
-// The OpenAlex hierarchy levels a user can browse topics by. (Wikipedia is a
-// single article per topic — a per-topic link, not a grouping.)
-export type TopicDimension = 'field' | 'domain';
-
 export interface TopicGroup {
   key: string;
   label: string;
-  sublabel: string | null; // e.g. the OpenAlex domain above a field
+  sublabel: string | null; // the OpenAlex field above a subfield
   topics: AggregatedTopic[];
 }
 
 const UNCLASSIFIED = 'Unclassified';
 
-// Buckets topics by the chosen classification level; each topic lands in
-// exactly one group. Groups are ordered by size (Unclassified last); topics
-// within a group by how many sources cover them.
-export function groupTopics(
-  topics: AggregatedTopic[],
-  dimension: TopicDimension,
-): TopicGroup[] {
+// Buckets topics by their OpenAlex subfield (with the field as a sub-label);
+// each topic lands in exactly one group. Groups are ordered by size
+// (Unclassified last); topics within a group by how many sources cover them.
+export function groupTopics(topics: AggregatedTopic[]): TopicGroup[] {
   const groups = new Map<string, TopicGroup>();
   const add = (label: string, sublabel: string | null, topic: AggregatedTopic) => {
     const group = groups.get(label) ?? { key: label, label, sublabel, topics: [] };
@@ -197,11 +165,8 @@ export function groupTopics(
   };
 
   for (const topic of topics) {
-    if (dimension === 'domain') {
-      add(topic.openalexDomain ?? UNCLASSIFIED, null, topic);
-    } else {
-      add(topic.openalexField ?? UNCLASSIFIED, topic.openalexDomain, topic);
-    }
+    const label = topic.openalexSubfield ?? UNCLASSIFIED;
+    add(label, label === UNCLASSIFIED ? null : topic.openalexField, topic);
   }
 
   const list = [...groups.values()];
@@ -216,6 +181,18 @@ export function groupTopics(
     return b.topics.length - a.topics.length || a.label.localeCompare(b.label);
   });
   return list;
+}
+
+// OpenAlex topic descriptions are auto-generated and all open with the same
+// "This cluster of papers …" boilerplate; strip it for display so the text
+// leads with the verb (e.g. "Focuses on …", "Explores …").
+export function formatTopicDescription(
+  description: string | null,
+): string | null {
+  if (!description) return description;
+  const stripped = description.replace(/^this cluster of papers\s+/i, '');
+  if (stripped === description || !stripped) return description;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
 // The OpenAlex hierarchy a topic falls under, formatted as a breadcrumb path.

@@ -53,6 +53,31 @@ export async function checkMaterial(
   return { data: data?.material ?? null, error };
 }
 
+// Fetches a material's transcript text (read from GCS server-side) so the
+// client can save or share it.
+export async function getTranscript(
+  materialId: string,
+): Promise<ServiceResult<{ transcript: string; title: string }>> {
+  const { data, error } = await invokeFunction<{ transcript: string; title: string }>(
+    'get-transcript',
+    { material_id: materialId },
+  );
+  return { data: data ?? null, error };
+}
+
+// Mints a short-lived signed URL for the material's original file (the GCS
+// bucket is private) so the client can download it directly.
+export async function getMaterialDownload(
+  materialId: string,
+): Promise<ServiceResult<{ url: string; file_name: string; mime_type: string }>> {
+  const { data, error } = await invokeFunction<{
+    url: string;
+    file_name: string;
+    mime_type: string;
+  }>('download-material', { material_id: materialId });
+  return { data: data ?? null, error };
+}
+
 export async function deleteMaterial(
   materialId: string,
 ): Promise<ServiceResult<true>> {
