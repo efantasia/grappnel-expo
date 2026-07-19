@@ -3,6 +3,10 @@ import { ServiceResult } from '@/lib/services/folders';
 import { supabase } from '@/lib/supabase';
 import { Flashcard, FlashcardDeck } from '@/lib/types';
 
+// Figure display URLs are shared with study guides; re-exported so existing
+// flashcard imports keep working.
+export { signFigureUrls } from '@/lib/services/figures';
+
 export async function listDecks(): Promise<ServiceResult<FlashcardDeck[]>> {
   const { data, error } = await supabase
     .from('flashcard_decks')
@@ -57,17 +61,4 @@ export async function generateFlashcards(
 export async function deleteDeck(id: string): Promise<ServiceResult<true>> {
   const { error } = await supabase.from('flashcard_decks').delete().eq('id', id);
   return { data: error ? null : true, error: error?.message ?? null };
-}
-
-// Mints short-lived signed URLs for a set of figures (the bucket is private) so
-// the study screen can render card images. Returns a map keyed by figure id.
-export async function signFigureUrls(
-  figureIds: string[],
-): Promise<ServiceResult<Record<string, string>>> {
-  if (figureIds.length === 0) return { data: {}, error: null };
-  const { data, error } = await invokeFunction<{ urls: Record<string, string> }>(
-    'sign-figures',
-    { figure_ids: figureIds },
-  );
-  return { data: data?.urls ?? null, error };
 }

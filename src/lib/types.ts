@@ -118,8 +118,12 @@ export interface FlashcardDeck {
 }
 
 // 'basic' = question/answer; 'cloze' = fill-in-the-blank (front has a "_____"
-// gap, back is the missing term).
-export type CardType = 'basic' | 'cloze';
+// gap, back is the missing term); 'image_occlusion' = a figure with a label
+// masked out (the mask is the blank; back is the hidden label).
+export type CardType = 'basic' | 'cloze' | 'image_occlusion';
+
+// [x, y, w, h] fractions (0-1) of the figure, mirroring material_figures.labels.
+export type OcclusionBox = [number, number, number, number];
 
 // A card in a deck. figure_id references the material_figures row shown with the
 // card (null for text-only cards); the joined figure carries display metadata.
@@ -133,6 +137,8 @@ export interface Flashcard {
   back: string;
   hint: string | null;
   figure_id: string | null;
+  // For image_occlusion cards: the box(es) to mask on the figure. Null otherwise.
+  occlusion: OcclusionBox[] | null;
   citation: string | null;
   created_at: string;
   material_figures: Pick<

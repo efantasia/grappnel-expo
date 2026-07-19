@@ -84,7 +84,7 @@ export default function GuideScreen() {
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.centerText, { color: colors.textSecondary }]}>
             Building your study guide from your sources… this usually takes
-            under a minute.
+            a few minutes.
           </Text>
         </View>
       ) : guide.status === 'error' ? (

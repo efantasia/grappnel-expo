@@ -1,18 +1,24 @@
-import React, { useMemo, useRef } from 'react';
+import { Image } from 'expo-image';
+import { X } from 'lucide-react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   Linking,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 
 import { screenScroll } from '@/components/ui/screen';
-import { Fonts, Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
-import { parseGuide, prepareBody } from '@/lib/guide-markdown';
+import { extractFigureIds, parseGuide, prepareBody } from '@/lib/guide-markdown';
+import { signFigureUrls } from '@/lib/services/figures';
 
 // react-native-markdown-display's default markdown-it renders raw `<br>` as
 // literal text. Teach it to emit a `hardbreak` token instead, so `<br>`
@@ -43,14 +49,67 @@ interface GuideContentProps {
 // scroll to the matching footnote.
 export function GuideContent({ content, meta }: GuideContentProps) {
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const sourcesTop = useRef(0);
   const footnoteOffsets = useRef<Record<number, number>>({});
+
+  const [figureUrls, setFigureUrls] = useState<Record<string, string>>({});
+  const [lightbox, setLightbox] = useState<{ url: string; caption: string } | null>(null);
 
   const { body, footnotes } = useMemo(() => {
     const parsed = parseGuide(content);
     return { body: prepareBody(parsed.body), footnotes: parsed.footnotes };
   }, [content]);
+
+  // Sign the ids of any figures the guide embeds so they can be displayed
+  // (the GCS bucket is private).
+  const figureIds = useMemo(() => extractFigureIds(content), [content]);
+  useEffect(() => {
+    if (figureIds.length === 0) return;
+    let cancelled = false;
+    signFigureUrls(figureIds).then(({ data }) => {
+      if (!cancelled && data) setFigureUrls(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [figureIds]);
+
+  // Render embedded figures (![caption](grappnel-figure://<id>)) as images once
+  // their signed URL is available; tapping opens a full-size viewer.
+  const rules = useMemo(
+    () => ({
+      image: (node: any) => {
+        const src: string = node.attributes?.src ?? '';
+        const match = /^grappnel-figure:\/\/(.+)$/.exec(src);
+        if (!match) return null;
+        const url = figureUrls[match[1]];
+        if (!url) return null;
+        const caption = (node.attributes?.alt || node.content || '').toString().trim();
+        return (
+          <Pressable
+            key={node.key}
+            onPress={() => setLightbox({ url, caption })}
+            style={styles.figureWrap}
+            accessibilityLabel="View figure full size"
+          >
+            <Image
+              source={{ uri: url }}
+              style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
+              contentFit="contain"
+              transition={150}
+              accessibilityLabel={caption || undefined}
+            />
+            {caption ? (
+              <Text style={[styles.caption, { color: colors.textTertiary }]}>{caption}</Text>
+            ) : null}
+          </Pressable>
+        );
+      },
+    }),
+    [figureUrls, colors],
+  );
 
   // Footnote references are rewritten to `#fn-<n>` links; intercept those to
   // scroll instead of opening a URL, and let real (e.g. video) links open.
@@ -102,6 +161,7 @@ export function GuideContent({ content, meta }: GuideContentProps) {
   );
 
   return (
+    <>
     <ScrollView
       ref={scrollRef}
       style={screenScroll.scroll}
@@ -111,7 +171,12 @@ export function GuideContent({ content, meta }: GuideContentProps) {
         <Text style={[styles.meta, { color: colors.textTertiary }]}>{meta}</Text>
       ) : null}
 
-      <Markdown style={markdownStyles} markdownit={markdownIt} onLinkPress={handleLink}>
+      <Markdown
+        style={markdownStyles}
+        markdownit={markdownIt}
+        rules={rules}
+        onLinkPress={handleLink}
+      >
         {body}
       </Markdown>
 
@@ -151,6 +216,33 @@ export function GuideContent({ content, meta }: GuideContentProps) {
         </View>
       ) : null}
     </ScrollView>
+
+    <Modal
+      visible={!!lightbox}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setLightbox(null)}
+    >
+      <Pressable style={styles.lightboxBackdrop} onPress={() => setLightbox(null)}>
+        {lightbox ? (
+          <Image
+            source={{ uri: lightbox.url }}
+            style={styles.lightboxImage}
+            contentFit="contain"
+            accessibilityLabel={lightbox.caption || undefined}
+          />
+        ) : null}
+        <Pressable
+          style={[styles.lightboxClose, { top: insets.top + Spacing.two }]}
+          onPress={() => setLightbox(null)}
+          hitSlop={12}
+          accessibilityLabel="Close"
+        >
+          <X size={28} color="#fff" />
+        </Pressable>
+      </Pressable>
+    </Modal>
+    </>
   );
 }
 
@@ -161,6 +253,36 @@ const styles = StyleSheet.create({
   meta: {
     fontSize: 13,
     marginBottom: Spacing.two,
+  },
+  figureWrap: {
+    marginVertical: Spacing.three,
+    gap: Spacing.one,
+  },
+  figure: {
+    width: '100%',
+    height: 240,
+    borderRadius: Radius.sm,
+  },
+  caption: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  lightboxBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.three,
+  },
+  lightboxImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lightboxClose: {
+    position: 'absolute',
+    right: Spacing.three,
+    padding: Spacing.two,
   },
   sources: {
     marginTop: Spacing.five,

@@ -127,6 +127,11 @@ async function setFiguresStatus(
   material.figures_status = status;
 }
 
+interface ManifestLabel {
+  text?: string;
+  box?: number[];
+}
+
 interface ManifestFigure {
   ordinal?: number;
   object?: string;
@@ -136,6 +141,25 @@ interface ManifestFigure {
   mime_type?: string;
   caption?: string | null;
   alt_text?: string | null;
+  labels?: ManifestLabel[];
+}
+
+// Validated figure labels ({ text, box: [x,y,w,h] fractions }) for occlusion.
+function sanitizeLabels(raw: ManifestLabel[] | undefined): { text: string; box: number[] }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { text: string; box: number[] }[] = [];
+  for (const item of raw) {
+    const text = typeof item?.text === 'string' ? item.text.trim().slice(0, 200) : '';
+    const box =
+      Array.isArray(item?.box) &&
+      item.box.length === 4 &&
+      item.box.every((n) => typeof n === 'number' && Number.isFinite(n))
+        ? item.box.map((n) => Math.max(0, Math.min(1, n)))
+        : null;
+    if (text && box) out.push({ text, box });
+    if (out.length >= 25) break;
+  }
+  return out;
 }
 
 // Reads the job's manifest and replaces the material's figure rows with it.
@@ -167,6 +191,7 @@ async function importManifest(
       mime_type: typeof f.mime_type === 'string' ? f.mime_type : 'image/jpeg',
       caption: typeof f.caption === 'string' ? f.caption.slice(0, 2000) : null,
       alt_text: typeof f.alt_text === 'string' ? f.alt_text.slice(0, 2000) : null,
+      labels: sanitizeLabels(f.labels),
     }));
 
   // Replace, don't append, so re-runs stay idempotent.

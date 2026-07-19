@@ -130,12 +130,23 @@ before writing Expo-API code.
   (`syncMaterial(id, metadataOnly)`) because title/folder live in structData.
 - Guide generation is async: `generate-guide` returns a `generating` row
   immediately and finishes via `EdgeRuntime.waitUntil`; clients poll the row.
+  Guides can embed figures: `generate-guide` offers the retrieved sources'
+  `material_figures` to Gemini, which inserts `[[figure:N]]` markers; the server
+  rewrites them to `![caption](grappnel-figure://<id>)` Markdown images (id
+  resolved server-side, each figure embedded at most once). `GuideContent`
+  extracts those ids, signs them via `sign-figures`, and renders them with a
+  custom `react-native-markdown-display` image rule (`expo-image` + caption +
+  tap-to-fullscreen). Figure display URLs are shared with flashcards via
+  `src/lib/services/figures.ts` (`signFigureUrls`).
 - **Figures** are extracted from document uploads (PDF/DOCX/PPTX/XLSX only —
   never text, media, or YouTube) so cards/guides can show images from the
   student's own sources. Parallel to indexing, `sync-material` starts the
   `grappnel-extract-figures` Cloud Run job (`gcp/extract-figures-job/`: poppler
   `pdfimages` / `unzip` media → `sharp` filter+normalize → Vertex Gemini
-  caption), which writes figures to `figures/<user_id>/<material_id>/…` plus a
+  caption + label detection, where each figure's part-labels come back with a
+  `box_2d`, normalized to `[x,y,w,h]` fractions and stored in
+  `material_figures.labels` for image-occlusion cards), which writes figures to
+  `figures/<user_id>/<material_id>/…` plus a
   `manifest.json` (or `error.txt`) there. `check-material` watches for the
   manifest (`settleFigures` in `_shared/figures.ts`) and imports it into
   `material_figures` (one row per kept figure, with the Gemini caption/alt
@@ -150,9 +161,16 @@ before writing Expo-API code.
   topic(s), offers Gemini the `material_figures` of the matched sources, and has
   it author cards — each optionally attaching a figure *by index* (resolved to a
   real `figure_id` server-side, never model-authored) so the card shows an image.
-  Cards are `type` `'basic'` (question/answer) or `'cloze'` (fill-in-the-blank:
+  Cards are `type` `'basic'` (question/answer), `'cloze'` (fill-in-the-blank:
   `front` has a `_____` gap, `back` is the missing term; the study screen fills
-  the gap on reveal). **Image answer-reveal review:** after drafting, every
+  the gap on reveal), or `'image_occlusion'` (a figure label is masked and the
+  student names it — the mask IS the blank). Occlusion: the model references a
+  figure's detected label by index (`figure_index` + `label_index`); the server
+  resolves it to the box(es) to mask (`flashcards.occlusion`, all boxes matching
+  the answer text) and sets `back` to the authoritative label text. The client
+  `OccludedImage` maps the box fractions onto the displayed image via the stored
+  intrinsic width/height (contain-fit letterboxing) and reveals on answer.
+  **Image answer-reveal review:** after drafting, every
   figure-bearing card is checked *multimodally* (`generateJsonFromParts` +
   `readObjectBase64`) — Gemini looks at the actual image and, if the card's
   answer is visibly shown on it (printed label/title/caption), the figure is

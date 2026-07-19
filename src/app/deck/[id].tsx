@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { OccludedImage } from '@/components/occluded-image';
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { ScreenHeader } from '@/components/ui/screen-header';
@@ -98,6 +99,17 @@ export default function DeckScreen() {
   const figureUri = card?.figure_id ? figureUrls[card.figure_id] : undefined;
   const hasHints = cards.some((c) => !!c.hint);
 
+  const cardFigure = card?.material_figures ?? null;
+  const occlusionBoxes = card?.occlusion ?? null;
+  const isOcclusion =
+    card?.type === 'image_occlusion' &&
+    !!occlusionBoxes?.length &&
+    !!cardFigure?.width &&
+    !!cardFigure?.height;
+  // Never show the raw image of an occlusion card if we can't mask it — that
+  // would expose the answer. Non-occlusion figure cards always show.
+  const showFigure = !!figureUri && (card?.type !== 'image_occlusion' || isOcclusion);
+
   return (
     <Screen>
       <ScreenHeader
@@ -134,8 +146,8 @@ export default function DeckScreen() {
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.centerText, { color: colors.textSecondary }]}>
-            Building your flashcards from your sources… this usually takes under
-            a minute.
+            Building your flashcards from your sources… this usually takes
+            a minute or two.
           </Text>
         </View>
       ) : deck.status === 'error' ? (
@@ -168,7 +180,7 @@ export default function DeckScreen() {
             onPress={() => setRevealed((r) => !r)}
             style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
-            {figureUri ? (
+            {showFigure && figureUri ? (
               <Pressable
                 style={styles.figureWrap}
                 // Don't let tapping the image flip the card — open it full-size.
@@ -178,13 +190,26 @@ export default function DeckScreen() {
                 }}
                 accessibilityLabel="View figure full size"
               >
-                <Image
-                  source={{ uri: figureUri }}
-                  style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
-                  contentFit="contain"
-                  transition={150}
-                  accessibilityLabel={card.material_figures?.alt_text ?? undefined}
-                />
+                {isOcclusion ? (
+                  <OccludedImage
+                    uri={figureUri}
+                    width={cardFigure?.width ?? null}
+                    height={cardFigure?.height ?? null}
+                    boxes={occlusionBoxes ?? []}
+                    revealed={revealed}
+                    style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
+                    maskColor={colors.primary}
+                    questionColor={colors.onPrimary}
+                  />
+                ) : (
+                  <Image
+                    source={{ uri: figureUri }}
+                    style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
+                    contentFit="contain"
+                    transition={150}
+                    accessibilityLabel={card.material_figures?.alt_text ?? undefined}
+                  />
+                )}
                 <View style={styles.expandBadge}>
                   <Maximize2 size={15} color="#fff" />
                 </View>
@@ -192,7 +217,7 @@ export default function DeckScreen() {
             ) : null}
 
             <Text style={[styles.side, { color: colors.textTertiary }]}>
-              {card.type === 'cloze' ? 'Fill in the blank' : 'Question'}
+              {card.type === 'basic' ? 'Question' : 'Fill in the blank'}
             </Text>
             <Text style={[styles.front, { color: colors.text }]}>{card.front}</Text>
 
@@ -220,7 +245,7 @@ export default function DeckScreen() {
               </View>
             ) : null}
 
-            {card.citation ? (
+            {card.citation && revealed ? (
               <Text style={[styles.citation, { color: colors.textTertiary }]}>
                 Source: {card.citation}
               </Text>
@@ -276,13 +301,24 @@ export default function DeckScreen() {
 
       {/* Full-size figure viewer: tap anywhere (or the ✕) to dismiss. */}
       <Modal
-        visible={lightboxOpen && !!figureUri}
+        visible={lightboxOpen && showFigure}
         transparent
         animationType="fade"
         onRequestClose={() => setLightboxOpen(false)}
       >
         <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxOpen(false)}>
-          {figureUri ? (
+          {figureUri && isOcclusion ? (
+            <OccludedImage
+              uri={figureUri}
+              width={cardFigure?.width ?? null}
+              height={cardFigure?.height ?? null}
+              boxes={occlusionBoxes ?? []}
+              revealed={revealed}
+              style={styles.lightboxImage}
+              maskColor={colors.primary}
+              questionColor={colors.onPrimary}
+            />
+          ) : figureUri ? (
             <Image
               source={{ uri: figureUri }}
               style={styles.lightboxImage}
@@ -343,6 +379,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 240,
     borderRadius: Radius.sm,
+    overflow: 'hidden',
   },
   expandBadge: {
     position: 'absolute',

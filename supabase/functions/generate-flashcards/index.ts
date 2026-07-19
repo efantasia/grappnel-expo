@@ -23,7 +23,9 @@ You will receive one or more topics, numbered excerpts retrieved from the studen
 
 Card types — set "type" on every card:
 - "basic": "front" is a question, "back" is the answer.
-- "cloze": a fill-in-the-blank. "front" is a complete statement with the single most important term replaced by exactly "_____" (five underscores); "back" is that missing term only. Example: front "The _____ is the primary site of glucose reabsorption in the nephron.", back "proximal convoluted tubule". Use cloze for definitions, key terms, and labeling facts; use basic for conceptual or reasoning questions. Include a healthy mix of both.
+- "cloze": a fill-in-the-blank. "front" is a complete statement with the single most important term replaced by exactly "_____" (five underscores); "back" is that missing term only. Example: front "The _____ is the primary site of glucose reabsorption in the nephron.", back "proximal convoluted tubule". Use cloze for definitions, key terms, and labeling facts; use basic for conceptual or reasoning questions.
+- "image_occlusion": a figure with ONE of its labels masked out for the student to name — only for a figure that lists "Labels". Set "type":"image_occlusion", "figure_index" to that figure, and "label_index" to the label to hide. Write "front" as the prompt (e.g. "Name the highlighted structure in the diagram.") and do NOT include the hidden label's text anywhere in the front. The hidden label is the answer. Strongly prefer these for anatomical/labeled-diagram figures — they are the best way to study labeling.
+Include a healthy mix: use image_occlusion whenever a figure has labels, cloze for text-based definitions/terms, and basic for conceptual questions.
 
 Requirements:
 - Produce 10 to 20 cards. Prefer fewer, high-quality cards over padding.
@@ -43,11 +45,12 @@ const CARD_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
-          type: { type: 'STRING', enum: ['basic', 'cloze'] },
+          type: { type: 'STRING', enum: ['basic', 'cloze', 'image_occlusion'] },
           front: { type: 'STRING' },
           back: { type: 'STRING' },
           hint: { type: 'STRING' },
           figure_index: { type: 'INTEGER' }, // -1 (or omitted) => no figure
+          label_index: { type: 'INTEGER' }, // for image_occlusion: which label to hide
           source: { type: 'STRING' },
         },
         required: ['type', 'front', 'back'],
@@ -63,11 +66,17 @@ interface GeneratedCard {
   back?: string;
   hint?: string;
   figure_index?: number;
+  label_index?: number;
   source?: string;
 }
 
 interface SourceInfo {
   name: string;
+}
+
+interface FigureLabel {
+  text: string;
+  box: number[]; // [x, y, w, h] fractions
 }
 
 interface FigureOption {
@@ -77,6 +86,7 @@ interface FigureOption {
   altText: string | null;
   gcsObject: string;
   mimeType: string;
+  labels: FigureLabel[];
 }
 
 const CHUNK_CAP = 20;
@@ -141,7 +151,7 @@ async function figuresForMaterials(
   if (materialIds.length === 0) return [];
   const { data } = await admin
     .from('material_figures')
-    .select('id, material_id, caption, alt_text, ordinal, gcs_object, mime_type')
+    .select('id, material_id, caption, alt_text, ordinal, gcs_object, mime_type, labels')
     .in('material_id', materialIds)
     .eq('user_id', userId)
     .order('material_id', { ascending: true })
@@ -154,6 +164,7 @@ async function figuresForMaterials(
     altText: (f.alt_text as string | null) ?? null,
     gcsObject: f.gcs_object as string,
     mimeType: (f.mime_type as string) || 'image/jpeg',
+    labels: (Array.isArray(f.labels) ? f.labels : []) as FigureLabel[],
   }));
 }
 
@@ -173,12 +184,13 @@ const REVIEW_SCHEMA = {
 };
 
 async function reviewFigureReveals(
-  rows: { figure_id: string | null; back: string }[],
+  rows: { type: string; figure_id: string | null; back: string }[],
   figuresById: Map<string, FigureOption>,
 ): Promise<void> {
   await Promise.all(
     rows.map(async (row) => {
-      if (!row.figure_id) return;
+      // Occlusion cards mask the answer on the image, so they never reveal it.
+      if (!row.figure_id || row.type === 'image_occlusion') return;
       const figure = figuresById.get(row.figure_id);
       if (!figure) return;
       try {
@@ -215,7 +227,10 @@ function buildFigureList(figures: FigureOption[], sources: Map<string, SourceInf
     .map((fig, i) => {
       const source = sources.get(fig.materialId)?.name ?? 'source';
       const desc = fig.caption ?? fig.altText ?? 'figure (no description)';
-      return `[${i}] (Source: ${source}) ${desc}`;
+      const labels = fig.labels.length
+        ? ` Labels: ${fig.labels.map((l, j) => `[${j}] ${l.text}`).join('; ')}`
+        : '';
+      return `[${i}] (Source: ${source}) ${desc}${labels}`;
     })
     .join('\n');
 }
@@ -280,15 +295,55 @@ ${buildFigureList(figures, sources)}`;
     const rows = cards.map((card, i) => {
       const idx = typeof card.figure_index === 'number' ? card.figure_index : -1;
       const figure = idx >= 0 && idx < figures.length ? figures[idx] : null;
+
+      let type: 'basic' | 'cloze' | 'image_occlusion' =
+        card.type === 'cloze'
+          ? 'cloze'
+          : card.type === 'image_occlusion'
+            ? 'image_occlusion'
+            : 'basic';
+      let figureId = figure?.id ?? null;
+      let occlusion: number[][] | null = null;
+      let back = card.back!.trim().slice(0, 4000);
+
+      if (type === 'image_occlusion') {
+        const li = typeof card.label_index === 'number' ? card.label_index : -1;
+        const label = figure && li >= 0 && li < figure.labels.length ? figure.labels[li] : null;
+        if (figure && label) {
+          const key = label.text.trim().toLowerCase();
+          // Mask every occurrence of the answer text, so a duplicate label
+          // elsewhere on the figure can't give it away.
+          const boxes = figure.labels
+            .filter(
+              (l) =>
+                l.text.trim().toLowerCase() === key &&
+                Array.isArray(l.box) &&
+                l.box.length === 4,
+            )
+            .map((l) => l.box);
+          if (boxes.length > 0) {
+            occlusion = boxes;
+            figureId = figure.id;
+            back = label.text.slice(0, 4000); // authoritative answer, not model text
+          }
+        }
+        if (!occlusion) {
+          // Invalid occlusion reference — degrade to a plain text card.
+          type = card.front?.includes('_____') ? 'cloze' : 'basic';
+          figureId = null;
+        }
+      }
+
       return {
         deck_id: deckId,
         user_id: userId,
         ordinal: i,
-        type: card.type === 'cloze' ? 'cloze' : 'basic',
+        type,
         front: card.front!.trim().slice(0, 4000),
-        back: card.back!.trim().slice(0, 4000),
+        back,
         hint: card.hint?.trim() ? card.hint.trim().slice(0, 1000) : null,
-        figure_id: figure?.id ?? null,
+        figure_id: figureId,
+        occlusion,
         citation: card.source?.trim() ? card.source.trim().slice(0, 200) : null,
       };
     });

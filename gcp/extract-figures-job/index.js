@@ -228,7 +228,14 @@ const CAPTION_SYSTEM =
   'so, describe it. "meaningful" is false for logos, decorative borders, ' +
   'headshots, icons, UI chrome, or near-blank images. "caption" is a concise ' +
   'sentence naming what the figure shows (its subject and, if a diagram/chart, ' +
-  'what it depicts). "alt_text" is a short accessibility description. Base ' +
+  'what it depicts). "alt_text" is a short accessibility description. ' +
+  'Also detect the text labels that annotate specific parts of the figure ' +
+  '(e.g. structure names pointing at features of a diagram). For each such ' +
+  'label return its exact visible text and a tight bounding box "box_2d" as ' +
+  '[ymin, xmin, ymax, xmax] using integers 0-1000 normalized to the image. ' +
+  'Include ONLY short labels that name a specific part or structure — skip the ' +
+  'figure title, captions, legends, axis numbers, and body/paragraph text. ' +
+  'Return an empty "labels" list when the figure has no such part labels. Base ' +
   'everything only on what is visible.';
 
 const CAPTION_SCHEMA = {
@@ -237,9 +244,52 @@ const CAPTION_SCHEMA = {
     meaningful: { type: 'BOOLEAN' },
     caption: { type: 'STRING' },
     alt_text: { type: 'STRING' },
+    labels: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          box_2d: { type: 'ARRAY', items: { type: 'INTEGER' } },
+        },
+        required: ['text', 'box_2d'],
+      },
+    },
   },
   required: ['meaningful', 'caption', 'alt_text'],
 };
+
+const MAX_LABELS = 25;
+
+// Gemini returns boxes as [ymin, xmin, ymax, xmax] normalized to 0-1000;
+// convert to [x, y, w, h] fractions (0-1) of the image and clamp. Null if
+// unusable, so a bad box is dropped rather than mis-masking a card.
+function toFractionBox(box2d) {
+  if (!Array.isArray(box2d) || box2d.length !== 4) return null;
+  const nums = box2d.map(Number);
+  if (!nums.every(Number.isFinite)) return null;
+  const [ymin, xmin, ymax, xmax] = nums;
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  const round = (v) => Math.round(v * 1e4) / 1e4;
+  const x = clamp(Math.min(xmin, xmax) / 1000);
+  const y = clamp(Math.min(ymin, ymax) / 1000);
+  const w = clamp(Math.abs(xmax - xmin) / 1000);
+  const h = clamp(Math.abs(ymax - ymin) / 1000);
+  if (w <= 0 || h <= 0) return null;
+  return [round(x), round(y), round(w), round(h)];
+}
+
+function parseLabels(raw) {
+  if (!Array.isArray(raw)) return [];
+  const labels = [];
+  for (const item of raw) {
+    const text = typeof item?.text === 'string' ? item.text.trim() : '';
+    const box = toFractionBox(item?.box_2d);
+    if (text && box) labels.push({ text: text.slice(0, 200), box });
+    if (labels.length >= MAX_LABELS) break;
+  }
+  return labels;
+}
 
 function geminiEndpoint(projectId, location, model) {
   const host =
@@ -295,10 +345,11 @@ async function captionFigure(endpoint, buffer, mimeType) {
       meaningful: parsed.meaningful !== false,
       caption: typeof parsed.caption === 'string' ? parsed.caption.trim() : null,
       alt_text: typeof parsed.alt_text === 'string' ? parsed.alt_text.trim() : null,
+      labels: parseLabels(parsed.labels),
     };
   } catch (err) {
     console.warn('Captioning failed, keeping figure uncaptioned:', err.message);
-    return { meaningful: true, caption: null, alt_text: null };
+    return { meaningful: true, caption: null, alt_text: null, labels: [] };
   }
 }
 
@@ -347,6 +398,7 @@ async function main() {
       mime_type: item.norm.mimeType,
       caption: item.caption.caption,
       alt_text: item.caption.alt_text,
+      labels: item.caption.labels,
     });
   }
 

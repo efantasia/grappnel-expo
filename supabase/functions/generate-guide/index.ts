@@ -30,6 +30,7 @@ Requirements:
 - Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label. Place the citation right after the fact it supports; do not add extra spaces before it.
 - Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of sentences or paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
 - Outside of citations, never reproduce the bracketed timestamp markers in the guide text.
+- You may be given a numbered list of figures (images) extracted from the materials. When a figure directly illustrates a point, reference it ON ITS OWN LINE with the exact marker [[figure:N]] (N = the figure's number from the list), placed right after the paragraph it illustrates. Reference a figure at most once, only when it genuinely helps a reader, and never use a number that is not in the list. Do not describe the marker or write image Markdown yourself — just the [[figure:N]] marker. If no figures are provided or none fit, add none.
 - If the excerpts only partially cover the topic, cover what they contain and add a short "Gaps to Review" note listing what the student should look up in their materials.
 - Do not invent facts that are not supported by the excerpts.`;
 
@@ -67,6 +68,47 @@ function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>
   return chunks
     .map((chunk, i) => `[${i + 1}] ${sources.get(chunk.materialId)?.name ?? chunk.title}\n${chunk.content}`)
     .join('\n\n---\n\n');
+}
+
+interface FigureRef {
+  id: string;
+  materialId: string;
+  caption: string | null;
+  altText: string | null;
+}
+
+// Figures from the materials the retrieval matched — the same relevance
+// heuristic flashcards use ("figures from the sources this topic draws on").
+async function figuresForGuide(
+  admin: SupabaseClient,
+  userId: string,
+  materialIds: string[],
+): Promise<FigureRef[]> {
+  if (materialIds.length === 0) return [];
+  const { data } = await admin
+    .from('material_figures')
+    .select('id, material_id, caption, alt_text, ordinal')
+    .in('material_id', materialIds)
+    .eq('user_id', userId)
+    .order('material_id', { ascending: true })
+    .order('ordinal', { ascending: true })
+    .limit(24);
+  return (data ?? []).map((f) => ({
+    id: f.id as string,
+    materialId: f.material_id as string,
+    caption: (f.caption as string | null) ?? null,
+    altText: (f.alt_text as string | null) ?? null,
+  }));
+}
+
+function buildFigureList(figures: FigureRef[], sources: Map<string, SourceInfo>): string {
+  if (figures.length === 0) return 'No figures are available for these sources.';
+  return figures
+    .map((f, i) => {
+      const source = sources.get(f.materialId)?.name ?? 'source';
+      return `[${i}] (Source: ${source}) ${f.caption ?? f.altText ?? 'figure (no description)'}`;
+    })
+    .join('\n');
 }
 
 // The most chunks any single guide feeds to Gemini, and the ceiling on how
@@ -171,6 +213,28 @@ function footnoteCitations(content: string, sources: Map<string, SourceInfo>): s
   return `${body.trimEnd()}\n\n### Sources\n\n${defs.join('\n')}\n`;
 }
 
+// Rewrites the model's inline [[figure:N]] markers into Markdown images the
+// client resolves to signed URLs (grappnel-figure://<id>). The id/URL is set
+// here — never by the model — and each figure is embedded at most once. An
+// invalid or already-used index drops the marker.
+const FIGURE_MARKER_RE = /\[\[figure:(\d+)\]\]/g;
+
+function sanitizeCaption(text: string): string {
+  return text.replace(/[[\]()\n\r]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+function embedFigures(content: string, figures: FigureRef[]): string {
+  const used = new Set<string>();
+  return content.replace(FIGURE_MARKER_RE, (_match, nStr: string) => {
+    const n = Number(nStr);
+    const fig = Number.isInteger(n) && n >= 0 && n < figures.length ? figures[n] : null;
+    if (!fig || used.has(fig.id)) return '';
+    used.add(fig.id);
+    const caption = sanitizeCaption(fig.caption ?? fig.altText ?? 'Figure');
+    return `\n\n![${caption}](grappnel-figure://${fig.id})\n\n`;
+  });
+}
+
 async function runGeneration(
   guideId: string,
   userId: string,
@@ -200,18 +264,22 @@ async function runGeneration(
       topics.length === 1
         ? `Topic: ${topics[0]}`
         : `Topics:\n${topics.map((t) => `- ${t}`).join('\n')}`;
+    const chunkMaterialIds = [...new Set(chunks.map((c) => c.materialId).filter(Boolean))];
     const sources = await sourcesByMaterial(admin, userId, chunks);
+    const figures = await figuresForGuide(admin, userId, chunkMaterialIds);
+
     const content = await generateText(
       SYSTEM_PROMPT,
-      `${topicLabel}\n\nExcerpts from my materials:\n\n${buildContext(chunks, sources)}`,
+      `${topicLabel}\n\nExcerpts from my materials:\n\n${buildContext(chunks, sources)}` +
+        `\n\nFigures available to reference (insert [[figure:N]] on its own line where one illustrates the text):\n${buildFigureList(figures, sources)}`,
     );
 
     await admin
       .from('study_guides')
       .update({
-        content: footnoteCitations(content, sources),
+        content: footnoteCitations(embedFigures(content, figures), sources),
         status: 'complete',
-        source_count: new Set(chunks.map((c) => c.materialId)).size,
+        source_count: chunkMaterialIds.length,
         error_message: null,
       })
       .eq('id', guideId);
