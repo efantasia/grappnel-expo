@@ -145,6 +145,12 @@ export interface Flashcard {
   // reveals a sibling card's answer. Null when there's nothing else to hide.
   occlusion_context: OcclusionBox[] | null;
   citation: string | null;
+  // Deep link for the citation — a YouTube watch URL pointing at the cited
+  // moment (…&t=<seconds>s). Null for uploaded files and documents.
+  citation_url: string | null;
+  // A deeper, grounded explanation of the answer, generated on demand by the
+  // explain-flashcard function and cached here. Null until the student asks.
+  explanation: string | null;
   created_at: string;
   material_figures: Pick<
     MaterialFigure,

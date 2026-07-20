@@ -64,6 +64,19 @@ export async function generateFlashcards(
   return { data: data?.deck ?? null, error };
 }
 
+// Generates (or returns the cached) deeper explanation of a card's answer,
+// grounded in the deck's source materials. Persisted server-side, so the next
+// request for the same card is instant.
+export async function explainFlashcard(
+  cardId: string,
+): Promise<ServiceResult<string>> {
+  const { data, error } = await invokeFunction<{ explanation: string }>(
+    'explain-flashcard',
+    { card_id: cardId },
+  );
+  return { data: data?.explanation ?? null, error };
+}
+
 export async function deleteDeck(id: string): Promise<ServiceResult<true>> {
   const { error } = await supabase.from('flashcard_decks').delete().eq('id', id);
   return { data: error ? null : true, error: error?.message ?? null };

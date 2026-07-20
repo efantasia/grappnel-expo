@@ -180,7 +180,7 @@ export default function FlashcardsScreen() {
           <View style={[styles.banner, { backgroundColor: colors.primarySoft }]}>
             <ActivityIndicator size="small" color={colors.primary} />
             <Text style={{ color: colors.primary, fontSize: 13, flex: 1 }}>
-              Preparing your Anki deck… this can take a moment.
+              Preparing your Anki deck… leave this window open until completed.
             </Text>
           </View>
         </View>

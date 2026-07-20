@@ -29,6 +29,7 @@ Requirements:
 - Include a "Self-Check Questions" section with 5-8 questions (answers in a separate "Answers" section at the end).
 - Each excerpt is labeled with the source it came from. When a point comes from a specific source, cite it inline like [Source: <source name>], using the source name exactly as it appears in the excerpt label. Place the citation right after the fact it supports; do not add extra spaces before it.
 - Excerpts from recorded lectures contain timestamp markers like [12:04] or [1:05:30] at the start of sentences or paragraphs. When citing such a source, include the timestamp of the marker immediately preceding the supporting content: [Source: <source name> @ 12:04]. Copy timestamps exactly as they appear — never invent or adjust them.
+- Document excerpts (from PDFs, slides, and notes) show a page number in the excerpt label like "(p. 12)". When citing such a source, include that page: [Source: <source name> @ p.12]. Copy the page number exactly from the label of the excerpt you used — never invent, guess, or adjust it, and omit the page entirely if the excerpt's label shows none.
 - Outside of citations, never reproduce the bracketed timestamp markers in the guide text.
 - You may be given a numbered list of figures (images) extracted from the materials. When a figure directly illustrates a point, reference it ON ITS OWN LINE with the exact marker [[figure:N]] (N = the figure's number from the list), placed right after the paragraph it illustrates. Reference a figure at most once, only when it genuinely helps a reader, and never use a number that is not in the list. Do not describe the marker or write image Markdown yourself — just the [[figure:N]] marker. If no figures are provided or none fit, add none.
 - If the excerpts only partially cover the topic, cover what they contain and add a short "Gaps to Review" note listing what the student should look up in their materials.
@@ -66,7 +67,13 @@ async function sourcesByMaterial(
 
 function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>): string {
   return chunks
-    .map((chunk, i) => `[${i + 1}] ${sources.get(chunk.materialId)?.name ?? chunk.title}\n${chunk.content}`)
+    .map((chunk, i) => {
+      const name = sources.get(chunk.materialId)?.name ?? chunk.title;
+      // Show the page (from Vertex's layout parser) in the label so the model
+      // can copy it into the citation, exactly as it copies transcript timestamps.
+      const page = chunk.page ? ` (p. ${chunk.page})` : '';
+      return `[${i + 1}] ${name}${page}\n${chunk.content}`;
+    })
     .join('\n\n---\n\n');
 }
 
@@ -154,8 +161,11 @@ function timestampToSeconds(ts: string): number | null {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
+// [Source: name], [Source: name @ 12:04] (media timestamp), or
+// [Source: name @ p.12] (document page). Group 1 = name, 2 = timestamp,
+// 3 = page — a citation carries at most one of the latter two.
 const CITATION_RE =
-  /\[Source:\s*([^\]@]+?)(?:\s*@\s*(\d{1,2}(?::\d{2}){1,2}))?\]/g;
+  /\[Source:\s*([^\]@]+?)(?:\s*@\s*(?:(\d{1,2}(?::\d{2}){1,2})|p\.?\s*(\d{1,4})))?\]/gi;
 
 // Builds the timestamped watch URL for a source citation (…&t=724s), or the
 // plain URL when there is no timestamp. Returns null for sources without a URL.
@@ -170,7 +180,8 @@ function citationHref(
     : url;
 }
 
-// Gemini cites plain "[Source: <name> @ 12:04]" inline. Rewrites each distinct
+// Gemini cites plain "[Source: <name>]" inline, optionally with a media
+// timestamp ("@ 12:04") or a document page ("@ p.12"). Rewrites each distinct
 // citation to a numbered footnote reference `[^n]` and appends the definitions
 // under a "### Sources" heading (the client renders the references as tappable
 // superscripts and the list as linked footnotes). Sources with a URL (YouTube
@@ -185,18 +196,19 @@ function footnoteCitations(content: string, sources: Map<string, SourceInfo>): s
   }
 
   const numberByKey = new Map<string, number>();
-  const order: { name: string; ts: string | undefined }[] = [];
+  const order: { name: string; ts: string | undefined; page: string | undefined }[] = [];
 
   const body = content.replace(
     CITATION_RE,
-    (_match, rawName: string, ts: string | undefined) => {
+    (_match, rawName: string, ts: string | undefined, page: string | undefined) => {
       const name = rawName.trim();
-      const key = ts ? `${name}@${ts}` : name;
+      // A distinct (source, moment) — timestamp OR page — gets its own footnote.
+      const key = ts ? `${name}@${ts}` : page ? `${name}#p${page}` : name;
       let n = numberByKey.get(key);
       if (n === undefined) {
         n = order.length + 1;
         numberByKey.set(key, n);
-        order.push({ name, ts });
+        order.push({ name, ts, page });
       }
       return `[^${n}]`;
     },
@@ -204,8 +216,10 @@ function footnoteCitations(content: string, sources: Map<string, SourceInfo>): s
 
   if (order.length === 0) return body;
 
-  const defs = order.map(({ name, ts }, i) => {
-    const label = ts ? `${name} @ ${ts}` : name;
+  const defs = order.map(({ name, ts, page }, i) => {
+    const label = ts ? `${name} @ ${ts}` : page ? `${name}, p. ${page}` : name;
+    // Only media sources (YouTube) have a URL to deep-link; document pages
+    // render as plain text (there's no per-page link into an uploaded file).
     const href = citationHref(urlByName.get(name), ts);
     return `[^${i + 1}]: ${href ? `[${label}](${href})` : label}`;
   });

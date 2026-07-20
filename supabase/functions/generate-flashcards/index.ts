@@ -58,7 +58,8 @@ Requirements:
 - Write plain text. Do NOT use Markdown, HTML, or LaTeX delimiters. Write formulas and symbols in readable plain text (e.g. "GFR < 60 mL/min/1.73m^2").
 - "hint" is optional: a short nudge that helps recall without giving away the answer.
 - Figures: when a listed figure helps a card, set "figure_index" to that figure's number. IMPORTANT: attached images are automatically reviewed and REMOVED if the card's answer is visibly shown on the image (a printed label, title, or caption) — that would give the answer away. So never rely on the image to carry the answer: for a labeling or cloze card, attach a figure only when the answer is NOT written on it, and phrase the card so it still makes sense if the image is removed. Do not attach unrelated figures, and never invent a figure that is not in the list. Omit figure_index (or use -1) for text-only cards.
-- "source" is the name of the material the card's content came from, exactly as it appears in the excerpt label (e.g. "Cell Biology Ch 3"). Include it when a card draws on a specific source.
+- "source_index" is the bracketed number of the excerpt the card is primarily based on (e.g. 3 for the excerpt labeled [3]). Set it whenever the card draws on a specific excerpt so the app can cite the exact source and page — the app resolves the source name and page number itself from that excerpt, so you do not need to write them out.
+- "source_timestamp": if that excerpt is from a recorded lecture or video (its text contains timestamp markers like [12:04] or [1:05:30]), copy the marker nearest the fact the card is based on, exactly as it appears but WITHOUT the brackets (e.g. "12:04"). This lets the app link to that moment. Omit it for documents and slides.
 - Cover the topic(s) broadly; when several topics are given, include cards for each.
 - Do not invent facts that are not supported by the excerpts or figures.`;
 }
@@ -78,7 +79,8 @@ function buildCardSchema(allowed: CardType[]) {
             hint: { type: 'STRING' },
             figure_index: { type: 'INTEGER' }, // -1 (or omitted) => no figure
             label_index: { type: 'INTEGER' }, // for image_occlusion: which label to hide
-            source: { type: 'STRING' },
+            source_index: { type: 'INTEGER' }, // 1-based excerpt the card cites
+            source_timestamp: { type: 'STRING' }, // lecture marker, e.g. "12:04"
           },
           required: ['type', 'front', 'back'],
         },
@@ -95,11 +97,15 @@ interface GeneratedCard {
   hint?: string;
   figure_index?: number;
   label_index?: number;
-  source?: string;
+  source_index?: number;
+  source_timestamp?: string;
 }
 
 interface SourceInfo {
   name: string;
+  // Watch URL for sources that can be deep-linked to a moment (YouTube). Null
+  // for uploaded files, which have no playable URL to jump into.
+  url: string | null;
 }
 
 interface FigureLabel {
@@ -157,13 +163,16 @@ async function sourcesByMaterial(
   if (materialIds.length === 0) return new Map();
   const { data } = await admin
     .from('materials')
-    .select('id, file_name, title, source_type')
+    .select('id, file_name, title, source_type, source_url')
     .in('id', materialIds)
     .eq('user_id', userId);
   return new Map(
     (data ?? []).map((m) => [
       m.id as string,
-      { name: (m.source_type === 'youtube' ? m.title : m.file_name) as string },
+      {
+        name: (m.source_type === 'youtube' ? m.title : m.file_name) as string,
+        url: (m.source_url as string | null) ?? null,
+      },
     ]),
   );
 }
@@ -242,9 +251,60 @@ async function reviewFigureReveals(
   );
 }
 
+// "Name" or "Name (p. 12)" — the citation shown on the card. The page comes
+// from the retrieved chunk (Vertex layout parser), never from the model.
+function formatCitation(name: string, page: number | null): string {
+  return (page ? `${name} (p. ${page})` : name).slice(0, 200);
+}
+
+// Transcript timestamp markers embedded per sentence, e.g. [12:04] / [1:05:30].
+const MARKER_RE = /\[(\d{1,2}(?::\d{2}){1,2})\]/g;
+
+function markersIn(content: string): string[] {
+  return [...content.matchAll(MARKER_RE)].map((m) => m[1]);
+}
+
+function timestampToSeconds(ts: string): number | null {
+  const parts = ts.split(':').map(Number);
+  if (parts.length < 2 || parts.length > 3 || parts.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+// Resolves a card's citation from the excerpt it cited: the display string plus
+// (for a deep-linkable source) a URL. A timestamp is only used when it actually
+// appears as a marker in the chunk text, so nothing is hallucinated; a YouTube
+// source then gets a link to that moment (…&t=<seconds>s), exactly like study
+// guides. Documents fall back to the chunk's page number. Name, page, and
+// timestamp are all authoritative — never free-typed by the model.
+function resolveCitation(
+  chunk: RetrievedChunk,
+  source: SourceInfo | undefined,
+  modelTs: string | undefined,
+): { citation: string; url: string | null } {
+  const name = source?.name ?? chunk.title;
+
+  const markers = markersIn(chunk.content);
+  if (markers.length > 0) {
+    const ts = modelTs && markers.includes(modelTs.trim()) ? modelTs.trim() : markers[0];
+    const seconds = timestampToSeconds(ts);
+    const url =
+      source?.url && seconds !== null
+        ? `${source.url}${source.url.includes('?') ? '&' : '?'}t=${seconds}s`
+        : (source?.url ?? null);
+    return { citation: `${name} @ ${ts}`.slice(0, 200), url };
+  }
+
+  return { citation: formatCitation(name, chunk.page), url: null };
+}
+
 function buildContext(chunks: RetrievedChunk[], sources: Map<string, SourceInfo>): string {
   return chunks
-    .map((chunk, i) => `[${i + 1}] ${sources.get(chunk.materialId)?.name ?? chunk.title}\n${chunk.content}`)
+    .map((chunk, i) => {
+      const name = sources.get(chunk.materialId)?.name ?? chunk.title;
+      return `[${i + 1}] ${formatCitation(name, chunk.page)}\n${chunk.content}`;
+    })
     .join('\n\n---\n\n');
 }
 
@@ -388,6 +448,15 @@ ${buildFigureList(figures, sources, occlusionAllowed)}`;
         }
       }
 
+      // Resolve the citation from the excerpt the model cited by index — the
+      // source name, page, and timestamp are all authoritative (never
+      // model-typed); a YouTube source gets a link to that moment.
+      const si = typeof card.source_index === 'number' ? card.source_index - 1 : -1;
+      const citeChunk = si >= 0 && si < chunks.length ? chunks[si] : null;
+      const resolved = citeChunk
+        ? resolveCitation(citeChunk, sources.get(citeChunk.materialId), card.source_timestamp)
+        : null;
+
       return {
         deck_id: deckId,
         user_id: userId,
@@ -399,7 +468,8 @@ ${buildFigureList(figures, sources, occlusionAllowed)}`;
         figure_id: figureId,
         occlusion,
         occlusion_context: null as number[][] | null,
-        citation: card.source?.trim() ? card.source.trim().slice(0, 200) : null,
+        citation: resolved?.citation ?? null,
+        citation_url: resolved?.url ?? null,
       };
     });
 

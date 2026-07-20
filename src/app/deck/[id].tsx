@@ -1,9 +1,10 @@
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
-import { ChevronLeft, ChevronRight, Lightbulb, Maximize2, X } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Lightbulb, Maximize2, Sparkles, X } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -21,7 +22,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Radius, Spacing } from '@/constants/theme';
 import { useInterval } from '@/hooks/use-interval';
 import { useThemeColors } from '@/hooks/use-theme-colors';
-import { getDeck, listCards, signFigureUrls } from '@/lib/services/flashcards';
+import { explainFlashcard, getDeck, listCards, signFigureUrls } from '@/lib/services/flashcards';
 import { Flashcard, FlashcardDeck } from '@/lib/types';
 
 export default function DeckScreen() {
@@ -36,6 +37,11 @@ export default function DeckScreen() {
   const [revealed, setRevealed] = useState(false);
   const [showHints, setShowHints] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  // Explanations fetched this session, keyed by card id (cards also carry any
+  // previously-cached explanation from the server).
+  const [explanations, setExplanations] = useState<Record<string, string>>({});
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -68,9 +74,25 @@ export default function DeckScreen() {
   const goTo = (next: number) => {
     setIndex(next);
     setRevealed(false);
+    setExplainError(null);
   };
 
   const card = cards[index];
+  const explanation = card ? (explanations[card.id] ?? card.explanation ?? null) : null;
+
+  const onExplain = useCallback(async () => {
+    if (!card) return;
+    setExplainLoading(true);
+    setExplainError(null);
+    const { data, error } = await explainFlashcard(card.id);
+    setExplainLoading(false);
+    if (error || !data) {
+      setExplainError(error ?? 'Could not load an explanation. Please try again.');
+      return;
+    }
+    setExplanations((prev) => ({ ...prev, [card.id]: data }));
+  }, [card]);
+
   const figureUri = card?.figure_id ? figureUrls[card.figure_id] : undefined;
   const hasHints = cards.some((c) => !!c.hint);
 
@@ -213,13 +235,69 @@ export default function DeckScreen() {
                 ) : (
                   <Text style={[styles.back, { color: colors.text }]}>{card.back}</Text>
                 )}
+
+                {explanation ? (
+                  <View style={[styles.explainBlock, { borderTopColor: colors.border }]}>
+                    <Text style={[styles.side, { color: colors.textTertiary }]}>Explanation</Text>
+                    <Text style={[styles.explanation, { color: colors.textSecondary }]}>
+                      {explanation}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.explainRow}>
+                    <Pressable
+                      // Don't let this bubble up to the card's flip handler.
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        onExplain();
+                      }}
+                      disabled={explainLoading}
+                      style={[
+                        styles.explainButton,
+                        { borderColor: colors.border, opacity: explainLoading ? 0.6 : 1 },
+                      ]}
+                      accessibilityLabel="Explain this answer in more detail"
+                    >
+                      {explainLoading ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <Sparkles size={16} color={colors.primary} />
+                      )}
+                      <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>
+                        {explainLoading ? 'Explaining…' : 'Explain'}
+                      </Text>
+                    </Pressable>
+                    {explainError ? (
+                      <Text style={[styles.explainErrorText, { color: colors.danger }]}>
+                        {explainError}
+                      </Text>
+                    ) : null}
+                  </View>
+                )}
               </View>
             ) : null}
 
             {card.citation && revealed ? (
-              <Text style={[styles.citation, { color: colors.textTertiary }]}>
-                Source: {card.citation}
-              </Text>
+              card.citation_url ? (
+                <Pressable
+                  // Open the lecture at the cited moment; don't flip the card.
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    Linking.openURL(card.citation_url!);
+                  }}
+                  hitSlop={6}
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open source: ${card.citation}`}
+                >
+                  <Text style={[styles.citation, styles.citationLink, { color: colors.primary }]}>
+                    Source: {card.citation}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={[styles.citation, { color: colors.textTertiary }]}>
+                  Source: {card.citation}
+                </Text>
+              )
             ) : null}
           </Pressable>
 
@@ -393,9 +471,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
   },
+  explainRow: {
+    marginTop: Spacing.three,
+    gap: Spacing.two,
+  },
+  explainButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingVertical: 8,
+    paddingHorizontal: Spacing.three,
+  },
+  explainErrorText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  explainBlock: {
+    borderTopWidth: 1,
+    marginTop: Spacing.three,
+    paddingTop: Spacing.three,
+    gap: Spacing.two,
+  },
+  explanation: {
+    fontSize: 15,
+    lineHeight: 22,
+  },
   citation: {
     fontSize: 12,
     marginTop: Spacing.two,
+  },
+  citationLink: {
+    textDecorationLine: 'underline',
   },
   nav: {
     flexDirection: 'row',

@@ -171,6 +171,10 @@ export interface RetrievedChunk {
   content: string;
   title: string;
   materialId: string;
+  // 1-based start page within the source document, when Vertex's layout parser
+  // reported a page span for the chunk (PDF/Office). Null for media/YouTube
+  // transcripts and anything the parser didn't page. Used for source citations.
+  page: number | null;
 }
 
 // Chunk names look like .../documents/<materialId>/chunks/<n> and the
@@ -220,10 +224,14 @@ export async function searchChunks(
     const chunk = result.chunk;
     if (!chunk?.content) continue;
     const structData = chunk.documentMetadata?.structData ?? {};
+    // pageSpan is present only for chunked datastores with layout parsing on
+    // (ours is); pageStart is 1-based. Absent for transcripts/YouTube.
+    const pageStart = Number(chunk.pageSpan?.pageStart);
     chunks.push({
       content: chunk.content,
       title: structData.title ?? chunk.documentMetadata?.title ?? 'Untitled',
       materialId: structData.material_id ?? materialIdFromChunkName(chunk.name),
+      page: Number.isInteger(pageStart) && pageStart > 0 ? pageStart : null,
     });
   }
   return chunks;
