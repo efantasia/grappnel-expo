@@ -62,3 +62,31 @@ export async function deleteDeck(id: string): Promise<ServiceResult<true>> {
   const { error } = await supabase.from('flashcard_decks').delete().eq('id', id);
   return { data: error ? null : true, error: error?.message ?? null };
 }
+
+// Starts an Anki .apkg export (figures embedded, occlusion baked in). Returns
+// an export id; poll checkAnkiExport until it's ready, then download the URL.
+export async function startAnkiExport(
+  deckId: string,
+): Promise<ServiceResult<{ export_id: string }>> {
+  const { data, error } = await invokeFunction<{ export_id: string }>('export-anki', {
+    deck_id: deckId,
+  });
+  return { data: data ?? null, error };
+}
+
+export interface AnkiExportStatus {
+  status: 'processing' | 'ready' | 'error';
+  url?: string;
+  message?: string;
+}
+
+export async function checkAnkiExport(
+  exportId: string,
+  fileName: string,
+): Promise<ServiceResult<AnkiExportStatus>> {
+  const { data, error } = await invokeFunction<AnkiExportStatus>('check-export', {
+    export_id: exportId,
+    file_name: fileName,
+  });
+  return { data: data ?? null, error };
+}

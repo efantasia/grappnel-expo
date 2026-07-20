@@ -46,6 +46,13 @@ export const gcpConfig = {
   get figuresRegion() {
     return Deno.env.get('GCP_FIGURES_REGION') ?? 'us-central1';
   },
+  // Cloud Run job that builds an Anki .apkg for a deck (flashcard export)
+  get ankiExportJob() {
+    return Deno.env.get('GCP_ANKI_EXPORT_JOB') ?? 'grappnel-anki-export';
+  },
+  get ankiExportRegion() {
+    return Deno.env.get('GCP_ANKI_EXPORT_REGION') ?? 'us-central1';
+  },
 };
 
 // Discovery Engine REST base URL is location-aware. Some methods (e.g.

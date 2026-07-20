@@ -10,6 +10,8 @@
 #   - the figure-extraction Cloud Run job (gcp/extract-figures-job: poppler +
 #     sharp + Vertex Gemini captions), which uses only the runtime service
 #     account (no external secret)
+#   - the Anki export Cloud Run job (gcp/anki-export-job: builds .apkg files),
+#     which also uses only the runtime service account
 #
 # Usage:
 #   VELMA_API_KEY=<modulate-console-admin-key> ./scripts/setup-gcp.sh <gcp-project-id> [prefix]
@@ -33,6 +35,7 @@ BUCKET_LOCATION="us"
 JOB_NAME="${PREFIX}-transcribe"
 JOB_REGION="us-central1"
 FIGURES_JOB_NAME="${PREFIX}-extract-figures"
+ANKI_JOB_NAME="${PREFIX}-anki-export"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
 GEMINI_LOCATION="${GEMINI_LOCATION:-global}"
 VELMA_SECRET="${PREFIX}-velma-api-key"
@@ -219,6 +222,21 @@ gcloud run jobs add-iam-policy-binding "${FIGURES_JOB_NAME}" \
   --project "${PROJECT_ID}" --region "${JOB_REGION}" \
   --member "serviceAccount:${SA_EMAIL}" --role roles/run.developer --quiet >/dev/null
 
+# The Anki export job also needs only the runtime service account (GCS I/O).
+echo "==> Deploying Anki export Cloud Run job ${ANKI_JOB_NAME} (builds gcp/anki-export-job)"
+gcloud run jobs deploy "${ANKI_JOB_NAME}" \
+  --project "${PROJECT_ID}" \
+  --region "${JOB_REGION}" \
+  --source gcp/anki-export-job \
+  --service-account "${SA_EMAIL}" \
+  --memory 2Gi --cpu 2 --task-timeout 900 --max-retries 1 \
+  --set-env-vars "GCS_BUCKET=${BUCKET}"
+
+echo "==> Allowing ${SA_NAME} to execute the Anki export job"
+gcloud run jobs add-iam-policy-binding "${ANKI_JOB_NAME}" \
+  --project "${PROJECT_ID}" --region "${JOB_REGION}" \
+  --member "serviceAccount:${SA_EMAIL}" --role roles/run.developer --quiet >/dev/null
+
 echo "==> Creating service account key ${KEY_FILE}"
 mkdir -p secrets
 if [ -f "${KEY_FILE}" ]; then
@@ -241,7 +259,9 @@ Done. Now set the edge function secrets on your Supabase project:
     GCP_TRANSCRIBE_JOB=${JOB_NAME} \\
     GCP_TRANSCRIBE_REGION=${JOB_REGION} \\
     GCP_FIGURES_JOB=${FIGURES_JOB_NAME} \\
-    GCP_FIGURES_REGION=${JOB_REGION}
+    GCP_FIGURES_REGION=${JOB_REGION} \\
+    GCP_ANKI_EXPORT_JOB=${ANKI_JOB_NAME} \\
+    GCP_ANKI_EXPORT_REGION=${JOB_REGION}
 
 For local development, put the same values in supabase/functions/.env
 (gitignored) before 'supabase functions serve'.

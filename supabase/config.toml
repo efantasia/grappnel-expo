@@ -442,3 +442,9 @@ verify_jwt = true
 
 [functions.sign-figures]
 verify_jwt = true
+
+[functions.export-anki]
+verify_jwt = true
+
+[functions.check-export]
+verify_jwt = true

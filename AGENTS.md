@@ -18,7 +18,8 @@ before writing Expo-API code.
   (uses the `personal` gcloud config; run `gcloud auth login` if expired)
 - `npm run deploy:figures` — deploy the figure-extraction Cloud Run job
   (same `personal` gcloud config)
-- `npm run deploy:backend` — all four in order
+- `npm run deploy:anki` — deploy the Anki `.apkg` export Cloud Run job
+- `npm run deploy:backend` — all five in order
 
 ## Architecture rules
 
@@ -177,7 +178,16 @@ before writing Expo-API code.
   dropped from that card (fail-safe: a review error also drops it). So a card
   never reveals its own answer in its picture. It returns a `generating` deck
   immediately and finishes via `EdgeRuntime.waitUntil`; `flashcard_decks` +
-  `flashcards` rows, clients poll.
+  `flashcards` rows, clients poll. **Export to Anki** (the deck's ⋯ menu on the
+  Cards tab, not the open deck) has two modes: (1) **text** — `src/lib/anki-export.ts` `toAnkiTsv`, a client-side
+  tab-separated import file mixing Basic + Cloze notes (cloze `_____` →
+  `{{c1::…}}`), saved via `downloadTextFile`; (2) **`.apkg` with images** —
+  `export-anki` writes a spec to GCS and starts the `grappnel-anki-export` Cloud
+  Run job (`gcp/anki-export-job`: `sharp` bakes occlusion masks into the figure,
+  Node's `node:sqlite` builds a genanki-compatible `collection.anki2`, `adm-zip`
+  packages it with the media), then `check-export` polls for the `.apkg` and
+  signs a download URL. Re-deploy the job after changing it (`npm run
+  deploy:anki`) — `functions deploy` does NOT cover it.
   The generate screen (`src/app/generate.tsx`) is shared: `?mode=flashcards`
   routes it to `generateFlashcards` + `/deck/[id]` (the study screen, which
   renders card images via `expo-image` + signed URLs). Deck list lives on the

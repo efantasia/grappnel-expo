@@ -23,7 +23,8 @@
     "deploy:functions": "npx supabase functions deploy",
     "deploy:transcribe": "CLOUDSDK_CONFIG=$HOME/.config/gcloud-personal gcloud run jobs deploy grappnel-transcribe --source gcp/transcribe-job --region us-central1 --project grappnel",
     "deploy:figures": "CLOUDSDK_CONFIG=$HOME/.config/gcloud-personal gcloud run jobs deploy grappnel-extract-figures --source gcp/extract-figures-job --region us-central1 --project grappnel",
-    "deploy:backend": "npm run deploy:db && npm run deploy:functions && npm run deploy:transcribe && npm run deploy:figures"
+    "deploy:anki": "CLOUDSDK_CONFIG=$HOME/.config/gcloud-personal gcloud run jobs deploy grappnel-anki-export --source gcp/anki-export-job --region us-central1 --project grappnel",
+    "deploy:backend": "npm run deploy:db && npm run deploy:functions && npm run deploy:transcribe && npm run deploy:figures && npm run deploy:anki"
   },
   "dependencies": {
     "@expo/ui": "~57.0.3",

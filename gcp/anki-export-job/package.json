@@ -1,0 +1,10 @@
+{
+  "name": "grappnel-anki-export-job",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run job: build an Anki .apkg for a deck (figures embedded, occlusion masks baked in) from a spec + media in GCS.",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "sharp": "^0.33.5"
+  }
+}
