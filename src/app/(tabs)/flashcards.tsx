@@ -33,6 +33,11 @@ import { FlashcardDeck } from '@/lib/types';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// The export job can be slow on a cold start (container spin-up) or for a large
+// deck, so poll generously — ~4 minutes, well under the job's own 15-min limit.
+const POLL_INTERVAL_MS = 2500;
+const POLL_MAX_ATTEMPTS = 96;
+
 export default function FlashcardsScreen() {
   const colors = useThemeColors();
   const router = useRouter();
@@ -99,8 +104,8 @@ export default function FlashcardsScreen() {
     try {
       const { data, error } = await startAnkiExport(deck.id);
       if (error || !data) throw new Error(error ?? 'Could not start the export.');
-      for (let attempt = 0; attempt < 45; attempt++) {
-        await sleep(2000);
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+        await sleep(POLL_INTERVAL_MS);
         const { data: status } = await checkAnkiExport(data.export_id, fileName);
         if (status?.status === 'ready' && status.url) {
           try {
@@ -112,7 +117,7 @@ export default function FlashcardsScreen() {
         }
         if (status?.status === 'error') throw new Error(status.message ?? 'Export failed.');
       }
-      throw new Error('Export timed out. Please try again.');
+      throw new Error('The export is taking longer than expected — please try again in a moment.');
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'Export failed.');
     } finally {
