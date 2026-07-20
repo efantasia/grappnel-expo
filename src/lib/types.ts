@@ -137,8 +137,13 @@ export interface Flashcard {
   back: string;
   hint: string | null;
   figure_id: string | null;
-  // For image_occlusion cards: the box(es) to mask on the figure. Null otherwise.
+  // For image_occlusion cards: this card's own target box(es), masked in the
+  // question and revealed on the answer. Null otherwise.
   occlusion: OcclusionBox[] | null;
+  // For image_occlusion cards sharing a figure: box(es) of OTHER cards' quizzed
+  // labels, kept masked in every state (including the answer) so this card never
+  // reveals a sibling card's answer. Null when there's nothing else to hide.
+  occlusion_context: OcclusionBox[] | null;
   citation: string | null;
   created_at: string;
   material_figures: Pick<

@@ -21,7 +21,10 @@ import { buildApkg } from './apkg.js';
 const PAD_BOX = 0.25;
 const PAD_IMG_X = 0.03;
 const PAD_IMG_Y = 0.02;
-const MASK_COLOR = '#5A4FCF';
+// The card's own target (purple, matches the app primary) vs sibling labels
+// kept covered so the card can't reveal another card's answer (neutral gray).
+const TARGET_COLOR = '#5A4FCF';
+const CONTEXT_COLOR = '#8E8DA6';
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -83,21 +86,26 @@ function clozeText(front, answer) {
   return `${escapeHtml(front)} ${cloze}`.trim();
 }
 
-// Draws the (padded) occlusion boxes onto the figure as filled rectangles.
-async function bakeMask(imageBuffer, boxes) {
+// Draws padded occlusion boxes onto the figure as filled rectangles. `groups`
+// is a list of { boxes, color } so a card can bake its own target and the
+// sibling context masks in different colors in one pass.
+async function bakeMask(imageBuffer, groups) {
   const meta = await sharp(imageBuffer).metadata();
   const W = meta.width ?? 0;
   const H = meta.height ?? 0;
-  if (!W || !H || !boxes.length) return imageBuffer;
-  const rects = boxes
-    .map((b) => {
+  const flat = groups.flatMap((g) =>
+    Array.isArray(g.boxes) ? g.boxes.map((b) => ({ b, color: g.color })) : [],
+  );
+  if (!W || !H || !flat.length) return imageBuffer;
+  const rects = flat
+    .map(({ b, color }) => {
       const padX = b[2] * PAD_BOX + PAD_IMG_X;
       const padY = b[3] * PAD_BOX + PAD_IMG_Y;
       const x = clamp(b[0] - padX);
       const y = clamp(b[1] - padY);
       const w = clamp(b[2] + 2 * padX);
       const h = clamp(b[3] + 2 * padY);
-      return `<rect x="${(x * W).toFixed(1)}" y="${(y * H).toFixed(1)}" width="${(Math.min(1 - x, w) * W).toFixed(1)}" height="${(Math.min(1 - y, h) * H).toFixed(1)}" rx="6" fill="${MASK_COLOR}"/>`;
+      return `<rect x="${(x * W).toFixed(1)}" y="${(y * H).toFixed(1)}" width="${(Math.min(1 - x, w) * W).toFixed(1)}" height="${(Math.min(1 - y, h) * H).toFixed(1)}" rx="6" fill="${color}"/>`;
     })
     .join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${rects}</svg>`;
@@ -126,11 +134,21 @@ async function main() {
 
     if (card.type === 'image_occlusion' && figure && Array.isArray(card.occlusion)) {
       const original = await readObject(bucket, figure.object);
-      const frontImg = await bakeMask(original, card.occlusion);
+      const context = Array.isArray(card.occlusion_context) ? card.occlusion_context : [];
+      // Front: everything covered (target + siblings). Back: target revealed,
+      // sibling labels still covered so the answer never leaks another card's.
+      const frontImg = await bakeMask(original, [
+        { boxes: card.occlusion, color: TARGET_COLOR },
+        { boxes: context, color: CONTEXT_COLOR },
+      ]);
+      const backBaked = context.length > 0;
+      const backImg = backBaked
+        ? await bakeMask(original, [{ boxes: context, color: CONTEXT_COLOR }])
+        : original;
       const frontName = `${mediaPrefix}${mediaSeq++}.jpg`;
-      const backName = `${mediaPrefix}${mediaSeq++}.${extFor(figure.mime)}`;
+      const backName = `${mediaPrefix}${mediaSeq++}.${backBaked ? 'jpg' : extFor(figure.mime)}`;
       media.push({ filename: frontName, data: frontImg });
-      media.push({ filename: backName, data: original });
+      media.push({ filename: backName, data: backImg });
       notes.push({
         model: 'basic',
         fields: [

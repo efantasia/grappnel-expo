@@ -47,7 +47,9 @@ Deno.serve(async (req) => {
 
   const { data: cards } = await admin
     .from('flashcards')
-    .select('type, front, back, citation, occlusion, material_figures(gcs_object, mime_type, width, height)')
+    .select(
+      'type, front, back, citation, occlusion, occlusion_context, material_figures(gcs_object, mime_type, width, height)',
+    )
     .eq('deck_id', deck.id)
     .eq('user_id', user.id)
     .order('ordinal', { ascending: true });
@@ -66,6 +68,7 @@ Deno.serve(async (req) => {
         back: (c.back as string) ?? '',
         citation: (c.citation as string | null) ?? null,
         occlusion: (c.occlusion as number[][] | null) ?? null,
+        occlusion_context: (c.occlusion_context as number[][] | null) ?? null,
         figure: figure?.gcs_object
           ? {
               object: figure.gcs_object,

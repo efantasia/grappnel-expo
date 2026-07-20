@@ -16,6 +16,7 @@ import { Screen, screenScroll } from '@/components/ui/screen';
 import { TextField } from '@/components/ui/text-field';
 import { Radius, Spacing } from '@/constants/theme';
 import { useThemeColors } from '@/hooks/use-theme-colors';
+import { hasLabeledFigures } from '@/lib/services/figures';
 import { listFolders } from '@/lib/services/folders';
 import { generateFlashcards } from '@/lib/services/flashcards';
 import { generateGuide } from '@/lib/services/guides';
@@ -25,7 +26,19 @@ import {
   listTopics,
   TopicGroup,
 } from '@/lib/services/topics';
-import { Folder } from '@/lib/types';
+import { CardType, Folder } from '@/lib/types';
+
+// Preset deck sizes offered on the flashcard generate screen (15 is the
+// default); the edge function clamps whatever it receives.
+const CARD_COUNTS = [10, 15, 20, 25, 30];
+
+// Card types the student can mix; image occlusion is only offered when the
+// selected sources actually have figures with detected labels.
+const CARD_TYPE_OPTIONS: { type: CardType; label: string }[] = [
+  { type: 'basic', label: 'Basic' },
+  { type: 'cloze', label: 'Cloze' },
+  { type: 'image_occlusion', label: 'Image occlusion' },
+];
 
 export default function GenerateScreen() {
   const colors = useThemeColors();
@@ -47,11 +60,39 @@ export default function GenerateScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Flashcard-only options: how many cards, and the mix of card types.
+  const [cardCount, setCardCount] = useState(15);
+  const [selectedTypes, setSelectedTypes] = useState<CardType[]>([
+    'basic',
+    'cloze',
+    'image_occlusion',
+  ]);
+  const [occlusionAvailable, setOcclusionAvailable] = useState(false);
+
   const toggleTopic = (name: string) => {
     setSelectedTopics((prev) =>
       prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name],
     );
   };
+
+  // Toggle a card type on/off, but never let the last one be removed.
+  const toggleCardType = (type: CardType) => {
+    setSelectedTypes((prev) => {
+      if (!prev.includes(type)) return [...prev, type];
+      const next = prev.filter((t) => t !== type);
+      return next.length > 0 ? next : prev;
+    });
+  };
+
+  // Image occlusion can only apply when the chosen sources have labeled
+  // figures — drop it from the effective mix when unavailable.
+  const effectiveTypes = useMemo(
+    () =>
+      selectedTypes.filter(
+        (t) => t !== 'image_occlusion' || occlusionAvailable,
+      ),
+    [selectedTypes, occlusionAvailable],
+  );
 
   // Any selected topic that isn't in the grouped suggestions (e.g. one
   // deep-linked in from the topic detail screen) still renders as a selected
@@ -93,12 +134,31 @@ export default function GenerateScreen() {
     }, [folderId]),
   );
 
+  // Whether the selected source scope has any labeled figures — gates whether
+  // the image occlusion card type is offered. Only relevant for decks.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isDeck) return;
+      let cancelled = false;
+      hasLabeledFigures(folderId).then(({ data }) => {
+        if (!cancelled) setOcclusionAvailable(!!data);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [folderId, isDeck]),
+  );
+
   const handleGenerate = async () => {
     setError(null);
     setSubmitting(true);
     const input = { topics, title: title.trim() || undefined, folderId };
     const { data, error: generateError } = isDeck
-      ? await generateFlashcards(input)
+      ? await generateFlashcards({
+          ...input,
+          count: cardCount,
+          cardTypes: effectiveTypes,
+        })
       : await generateGuide(input);
     setSubmitting(false);
     if (generateError || !data) {
@@ -189,7 +249,7 @@ export default function GenerateScreen() {
           style={styles.topicInput}
         />
         <TextField
-          label="Guide title (optional)"
+          label={isDeck ? 'Deck title (optional)' : 'Guide title (optional)'}
           value={title}
           onChangeText={setTitle}
           placeholder="Defaults to the topics"
@@ -205,12 +265,82 @@ export default function GenerateScreen() {
           <Text style={{ color: colors.text, fontSize: 16 }}>{folderName}</Text>
           <ChevronDown size={18} color={colors.textSecondary} />
         </Pressable>
+        {isDeck ? (
+          <>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>
+              Number of cards
+            </Text>
+            <View style={styles.chips}>
+              {CARD_COUNTS.map((n) => {
+                const selected = cardCount === n;
+                return (
+                  <Pressable
+                    key={n}
+                    onPress={() => setCardCount(n)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: selected ? colors.primarySoft : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: selected ? colors.primary : colors.text,
+                        fontSize: 14,
+                      }}
+                    >
+                      {n}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Card types</Text>
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
+              {occlusionAvailable
+                ? 'Choose which kinds of cards to include.'
+                : 'Choose which kinds of cards to include. Image occlusion needs sources with labeled figures.'}
+            </Text>
+            <View style={styles.chips}>
+              {CARD_TYPE_OPTIONS.filter(
+                (opt) => opt.type !== 'image_occlusion' || occlusionAvailable,
+              ).map((opt) => {
+                const selected = selectedTypes.includes(opt.type);
+                return (
+                  <Pressable
+                    key={opt.type}
+                    onPress={() => toggleCardType(opt.type)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: selected ? colors.primarySoft : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    {selected ? <Check size={14} color={colors.primary} /> : null}
+                    <Text
+                      style={{
+                        color: selected ? colors.primary : colors.text,
+                        fontSize: 14,
+                      }}
+                    >
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
         {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
         <Button
           title={isDeck ? 'Generate flashcards' : 'Generate study guide'}
           onPress={handleGenerate}
           loading={submitting}
-          disabled={topics.length === 0}
+          disabled={topics.length === 0 || (isDeck && effectiveTypes.length === 0)}
         />
       </ScrollView>
 

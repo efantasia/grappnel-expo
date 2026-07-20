@@ -76,6 +76,7 @@ export default function DeckScreen() {
 
   const cardFigure = card?.material_figures ?? null;
   const occlusionBoxes = card?.occlusion ?? null;
+  const occlusionContext = card?.occlusion_context ?? null;
   const isOcclusion =
     card?.type === 'image_occlusion' &&
     !!occlusionBoxes?.length &&
@@ -164,10 +165,12 @@ export default function DeckScreen() {
                     width={cardFigure?.width ?? null}
                     height={cardFigure?.height ?? null}
                     boxes={occlusionBoxes ?? []}
+                    contextBoxes={occlusionContext ?? []}
                     revealed={revealed}
                     style={[styles.figure, { backgroundColor: colors.surfaceAlt }]}
                     maskColor={colors.primary}
                     questionColor={colors.onPrimary}
+                    contextColor={colors.textTertiary}
                   />
                 ) : (
                   <Image
@@ -270,10 +273,12 @@ export default function DeckScreen() {
               width={cardFigure?.width ?? null}
               height={cardFigure?.height ?? null}
               boxes={occlusionBoxes ?? []}
+              contextBoxes={occlusionContext ?? []}
               revealed={revealed}
               style={styles.lightboxImage}
               maskColor={colors.primary}
               questionColor={colors.onPrimary}
+              contextColor={colors.textTertiary}
             />
           ) : figureUri ? (
             <Image

@@ -17,37 +17,48 @@ const PAD_IMG_Y = 0.02; // + this fraction of the image height, each side
 // Renders a figure with one or more label regions masked out (image-occlusion
 // cloze). Boxes are [x, y, w, h] fractions of the figure; we map them onto the
 // on-screen image using its intrinsic width/height and the measured container,
-// accounting for `contain` letterboxing. Masks disappear when `revealed`.
+// accounting for `contain` letterboxing.
+//
+// Two kinds of masks:
+// - `boxes` are the card's own target(s): shown (with a "?") while unrevealed,
+//   uncovered on reveal.
+// - `contextBoxes` are OTHER cards' answers on the same figure: kept masked in
+//   every state (including on reveal) so this card can't give away a sibling
+//   card's answer. Drawn in a neutral `contextColor`.
 //
 // The image is withheld until the container has been measured (so a mask is
-// never a frame late — which would flash the answer), and when intrinsic
+// never a frame late — which would flash an answer), and when intrinsic
 // dimensions are missing the unrevealed image is not shown at all.
 export function OccludedImage({
   uri,
   width,
   height,
   boxes,
+  contextBoxes = [],
   revealed,
   style,
   maskColor,
   questionColor,
+  contextColor,
   contentFit = 'contain',
 }: {
   uri: string;
   width: number | null;
   height: number | null;
   boxes: OcclusionBox[];
+  contextBoxes?: OcclusionBox[];
   revealed: boolean;
   style?: StyleProp<ViewStyle>;
   maskColor: string;
   questionColor: string;
+  contextColor?: string;
   contentFit?: 'contain' | 'cover';
 }) {
   const [layout, setLayout] = useState<{ w: number; h: number } | null>(null);
   const canMask = !!(width && height);
 
-  const rects = useMemo(() => {
-    if (!layout || !width || !height) return [];
+  const { targetRects, contextRects } = useMemo(() => {
+    if (!layout || !width || !height) return { targetRects: [], contextRects: [] };
     const scale =
       contentFit === 'cover'
         ? Math.max(layout.w / width, layout.h / height)
@@ -56,25 +67,29 @@ export function OccludedImage({
     const dispH = height * scale;
     const offX = (layout.w - dispW) / 2;
     const offY = (layout.h - dispH) / 2;
-    return boxes.map((b) => {
-      const padX = b[2] * PAD_BOX + PAD_IMG_X;
-      const padY = b[3] * PAD_BOX + PAD_IMG_Y;
-      const x = Math.max(0, b[0] - padX);
-      const y = Math.max(0, b[1] - padY);
-      const w = Math.min(1 - x, b[2] + 2 * padX);
-      const h = Math.min(1 - y, b[3] + 2 * padY);
-      return {
-        left: offX + x * dispW,
-        top: offY + y * dispH,
-        width: w * dispW,
-        height: h * dispH,
-      };
-    });
-  }, [layout, width, height, boxes, contentFit]);
+    const map = (bxs: OcclusionBox[]) =>
+      bxs.map((b) => {
+        const padX = b[2] * PAD_BOX + PAD_IMG_X;
+        const padY = b[3] * PAD_BOX + PAD_IMG_Y;
+        const x = Math.max(0, b[0] - padX);
+        const y = Math.max(0, b[1] - padY);
+        const w = Math.min(1 - x, b[2] + 2 * padX);
+        const h = Math.min(1 - y, b[3] + 2 * padY);
+        return {
+          left: offX + x * dispW,
+          top: offY + y * dispH,
+          width: w * dispW,
+          height: h * dispH,
+        };
+      });
+    return { targetRects: map(boxes), contextRects: map(contextBoxes) };
+  }, [layout, width, height, boxes, contextBoxes, contentFit]);
 
-  // When not revealed we only show the image once masks can be placed, so the
-  // hidden label is never briefly visible.
-  const showImage = revealed || (canMask && !!layout);
+  // Context masks persist even when revealed, so we always need the layout
+  // before showing the image (otherwise a sibling answer would flash). Target
+  // masks only matter while unrevealed.
+  const needMask = contextBoxes.length > 0 || (!revealed && boxes.length > 0);
+  const showImage = !needMask || (canMask && !!layout);
 
   return (
     <View
@@ -91,19 +106,30 @@ export function OccludedImage({
           transition={150}
         />
       ) : null}
-      {!revealed && layout
-        ? rects.map((r, i) => (
+      {layout && canMask ? (
+        <>
+          {contextRects.map((r, i) => (
             <View
-              key={i}
+              key={`ctx-${i}`}
               pointerEvents="none"
-              style={[styles.mask, r, { backgroundColor: maskColor }]}
-            >
-              <Text style={[styles.q, { color: questionColor }]} numberOfLines={1}>
-                ?
-              </Text>
-            </View>
-          ))
-        : null}
+              style={[styles.mask, r, { backgroundColor: contextColor ?? maskColor }]}
+            />
+          ))}
+          {!revealed
+            ? targetRects.map((r, i) => (
+                <View
+                  key={`tgt-${i}`}
+                  pointerEvents="none"
+                  style={[styles.mask, r, { backgroundColor: maskColor }]}
+                >
+                  <Text style={[styles.q, { color: questionColor }]} numberOfLines={1}>
+                    ?
+                  </Text>
+                </View>
+              ))
+            : null}
+        </>
+      ) : null}
     </View>
   );
 }

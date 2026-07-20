@@ -1,7 +1,7 @@
 import { invokeFunction } from '@/lib/functions';
 import { ServiceResult } from '@/lib/services/folders';
 import { supabase } from '@/lib/supabase';
-import { Flashcard, FlashcardDeck } from '@/lib/types';
+import { CardType, Flashcard, FlashcardDeck } from '@/lib/types';
 
 // Figure display URLs are shared with study guides; re-exported so existing
 // flashcard imports keep working.
@@ -39,6 +39,10 @@ export interface GenerateDeckInput {
   title?: string;
   folderId?: string | null;
   materialIds?: string[];
+  // How many cards to generate (server clamps to its bounds; defaults to 15).
+  count?: number;
+  // Which card types are allowed in the mix (defaults to all types server-side).
+  cardTypes?: CardType[];
 }
 
 // Returns immediately with a 'generating' deck row; poll getDeck until the
@@ -53,6 +57,8 @@ export async function generateFlashcards(
       title: input.title,
       folder_id: input.folderId ?? null,
       material_ids: input.materialIds,
+      count: input.count,
+      card_types: input.cardTypes,
     },
   );
   return { data: data?.deck ?? null, error };
